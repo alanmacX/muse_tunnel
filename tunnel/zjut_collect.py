@@ -41,17 +41,34 @@ async def fetch_exams(client,year,term):
 
 async def collect(force=False):
     previous=state_get(SOURCE,'last_attempt_seconds')
-    if not force and previous and time.time()-float(previous)<1800:return 'cached'
+    delay=int(state_get(SOURCE,'retry_interval_seconds') or 1800)
+    if not force and previous and time.time()-float(previous)<delay:return 'cached'
     state_set(SOURCE,'last_attempt_seconds',str(time.time()))
-    components={};counts={}
+    components={};counts={};stage='login';endpoint='not_requested'
+    async def track_request(request):
+        nonlocal endpoint
+        host=request.url.host;path=request.url.path
+        if host=='www.gdjw.zjut.edu.cn' and path==zjut.SSO_ENTRY:endpoint='school_sso_callback'
+        elif host=='oauth.zjut.edu.cn':endpoint='school_unified_authentication'
+        elif host=='www.gdjw.zjut.edu.cn':endpoint='school_academic_system'
+        else:endpoint='other_redirect'
+    def set_retry(network_failure):
+        failures=int(state_get(SOURCE,'network_failure_count') or 0)+1 if network_failure else 0
+        seconds=min(120*2**min(failures-1,3),900) if network_failure else 1800
+        state_set(SOURCE,'network_failure_count',str(failures))
+        state_set(SOURCE,'retry_interval_seconds',str(seconds))
+        return seconds
     try:
         sid,password=credentials()
-        async with httpx.AsyncClient(follow_redirects=True,timeout=25,headers={'User-Agent':zjut.UA,'Accept-Language':'zh-CN'}) as client:
+        async with httpx.AsyncClient(follow_redirects=True,timeout=25,headers={'User-Agent':zjut.UA,'Accept-Language':'zh-CN'},
+                                     event_hooks={'request':[track_request]}) as client:
             await zjut._login(client,sid,password)
+            stage='semester'
             semester=await zjut._fetch_semester(client)
             if not semester:raise RuntimeError('semester_detection_failed')
             year,term=semester['year'],semester['term'];identity=year+':'+term
             for kind in ('timetable','exams'):
+                stage=kind
                 try:
                     raw=await zjut._post_query(client,zjut.SCHEDULE_PAGE,zjut.SCHEDULE,year,term) if kind=='timetable' else await fetch_exams(client,year,term)
                     if kind=='timetable' and (not isinstance(raw,dict) or not isinstance(raw.get('kbList'),list)):raise RuntimeError('timetable_response_changed')
@@ -62,15 +79,21 @@ async def collect(force=False):
                     ingest(SOURCE,identity+':'+kind,payload)
                     counts[kind]=len(parsed);components[kind]={'available':True,'reason':'read_ok'}
                 except Exception as e:
-                    components[kind]={'available':False,'reason':str(e) if isinstance(e,RuntimeError) else type(e).__name__}
+                    components[kind]={'available':False,'reason':str(e) if isinstance(e,RuntimeError) else type(e).__name__,
+                                      'failure_stage':stage,'failure_endpoint':endpoint}
             good=sum(x['available'] for x in components.values())
+            retry=set_retry(any(x.get('reason') in ('ReadTimeout','ConnectTimeout','WriteTimeout','PoolTimeout',
+                'ConnectError','ReadError','WriteError','RemoteProtocolError') for x in components.values()))
             update_status(SOURCE,'available' if good==2 else 'degraded' if good else 'unavailable',bool(good),
                           'authenticated_read_ok' if good==2 else 'partial_collection',
                           {'components':components,'counts':counts,'semester':semester,'poll_interval_seconds':1800,
+                           'next_retry_seconds':retry,
                            'stale_after_seconds':2400,'coverage':'current_term_timetable_and_exams','transport':'legacy_http_origin_https_cas'})
             return counts
     except Exception as e:
         reason=str(e) if isinstance(e,RuntimeError) else type(e).__name__
+        retry=set_retry(isinstance(e,(httpx.TimeoutException,httpx.NetworkError,httpx.RemoteProtocolError)))
         update_status(SOURCE,'unavailable',False,reason,{'components':components,'poll_interval_seconds':1800,
+                         'next_retry_seconds':retry,'failure_stage':stage,'failure_endpoint':endpoint,
                          'stale_after_seconds':2400,'coverage':'current_term_timetable_and_exams'})
         return 'failed'

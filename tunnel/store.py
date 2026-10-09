@@ -57,6 +57,9 @@ def update_status(source,state,available,reason,details):
         c.execute('INSERT OR REPLACE INTO source_status VALUES (?,?,?,?,?,?,?,?)',
                   (source,state,int(available),timestamp,success,failures,reason,canonical(details)))
         changed=not old or (old['state'],old['available'],old['reason'])!=(state,int(available),reason) or json.loads(old['details']).get('components')!=details.get('components')
+        if old:
+            old_details=json.loads(old['details'])
+            changed=changed or any(old_details.get(k)!=details.get(k) for k in ('failure_stage','failure_endpoint'))
         if changed:
             payload={'source':source,'kind':'source_status','state':state,'available':bool(available),
                      'reason':reason,'details':details,'sent_at':timestamp}
