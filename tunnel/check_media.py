@@ -30,6 +30,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert media.archive_file(str(link), [cache]) is None
     assert media.archive_file('../key', [cache]) is None
     assert media.attachments({'attachments': [{'url': 'http://127.0.0.1/secret'}]}, [cache])[0]['status'] == 'not_downloaded'
+    assert media.attachments({'contentType': 2, 'mediaId': 'source-image', 'filepath': '', 'url': 'https://example.org/image'}, [cache])[0]['status'] == 'not_downloaded'
+    assert media.attachments({'contentType': 2, 'mediaId': 'source-image', 'blurredPath': str(image)}, [cache])[0]['status'] == 'preview_available'
     assert media.attachments({'attachments': [{'extension': '{"cardInstanceId":"123"}'}]}, [cache])[0]['status'] == 'card_reference_only'
     assert store.ingest('dingtalk', 'file-test', {'attachments': files}, api.now())
     assert not store.ingest('dingtalk', 'file-test', {'attachments': media.attachments(ref, [cache])}, api.now())

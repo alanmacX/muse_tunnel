@@ -2,7 +2,7 @@
 import asyncio,base64,ipaddress,json,logging,os,re,sqlite3,subprocess,time
 from datetime import datetime,timezone
 from pathlib import Path
-from api import init,digest,now,connection
+from api import init,digest,now,connection,DB
 from store import ingest,refresh_daily,update_status,state_get,state_set
 from vendor import chaoxing,dingtalk
 
@@ -13,7 +13,7 @@ SESSION_DB=os.environ.get('MUSE_SESSION_DB','data/sessions.db')
 
 
 from sanitize import clean
-from media import attachments
+from media import attachments,archive_file
 
 def timestamp(ms):
     try:return datetime.fromtimestamp(float(ms)/1000,tz=timezone.utc).isoformat()
@@ -79,7 +79,17 @@ def collect_dingtalk():
                     cache_root=Path(os.environ.get('DINGTALK_DB_SOURCE','/home/ubuntu/.config/DingTalk'))
                     media_roots=[folder for name in ('ImageFiles','AudioFiles','VideoFiles','QuickTransFiles','resource_cache')
                                  for folder in cache_root.glob('*/'+name)]
+                    media_roots.append(DB.parent/'imports')
                     files=attachments(raw.get('content'), media_roots)
+                    imported=state_get(source,'file:'+cid+':'+str(mid))
+                    if imported:
+                        imported=json.loads(imported)
+                        asset=archive_file(imported['filepath'],media_roots)
+                        if asset:
+                            if files:
+                                files[0].update(asset)
+                            else:
+                                files.append(asset)
                     payload={'source':source,'kind':'message','source_id':str(mid),'conversation_id':cid,
                              'conversation':parsed.get('conversation_title') or cid,
                              'sent_at':sent,'text':parsed.get('text') or '',

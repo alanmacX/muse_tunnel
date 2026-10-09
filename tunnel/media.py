@@ -54,6 +54,8 @@ def archive_file(candidate, roots):
         if data.startswith(signature):
             mime = kind
             break
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        mime = 'image/webp'
     filename = re.sub(r'[^\w. ()-]', '_', resolved.name)[:180] or asset_id
     with connection() as c:
         c.execute('INSERT OR IGNORE INTO assets VALUES (?,?,?,?,?)',
@@ -67,6 +69,19 @@ def archive_file(candidate, roots):
 def attachments(value, roots):
     """Retain references and distinguish card bodies from actual cached files."""
     found = []
+    def append(ref):
+        result = None
+        path = ref.get('filepath')
+        if isinstance(path, str) and path:
+            result = archive_file(path, roots)
+        preview = ref.get('blurredPath') or ref.get('thumbpath')
+        if result is None and isinstance(preview, str) and preview:
+            result = archive_file(preview, roots)
+            if result and result['status'] == 'available':
+                result.update(status='preview_available', original_available=False)
+        found.append({'reference': ref, **(result or {
+            'status': 'not_downloaded' if path or ref.get('url') or ref.get('mediaId') or ref.get('filename')
+                      else 'card_reference_only'})})
     def visit(item, depth=0):
         if depth > 12:
             return
@@ -79,17 +94,14 @@ def attachments(value, roots):
             for part in item:
                 visit(part, depth + 1)
         elif isinstance(item, dict):
+            if 'contentType' in item and ('mediaId' in item or 'filepath' in item):
+                append(item)
             for key, part in item.items():
                 if key == 'attachments' and isinstance(part, list):
                     for ref in part:
                         if not isinstance(ref, dict):
                             continue
-                        result = None
-                        path = ref.get('filepath')
-                        if isinstance(path, str) and path:
-                            result = archive_file(path, roots)
-                        found.append({'reference': ref, **(result or {
-                            'status': 'not_downloaded' if path or ref.get('url') else 'card_reference_only'})})
+                        append(ref)
                 else:
                     visit(part, depth + 1)
     visit(value)
