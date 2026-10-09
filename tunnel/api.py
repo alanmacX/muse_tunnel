@@ -68,6 +68,10 @@ def init():
           seq INTEGER PRIMARY KEY REFERENCES events(seq), state TEXT NOT NULL,
           raw_hash TEXT, reason TEXT NOT NULL, quarantined_at TEXT NOT NULL,
           expires_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS refresh_requests (
+          request_id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE NOT NULL,
+          reason TEXT NOT NULL, evidence_event_id TEXT, created_at TEXT NOT NULL,
+          state TEXT NOT NULL, started_at TEXT, completed_at TEXT, result TEXT);
         CREATE TABLE IF NOT EXISTS delivered (
           consumer TEXT NOT NULL, seq INTEGER NOT NULL REFERENCES events(seq),
           PRIMARY KEY(consumer, seq));
@@ -140,6 +144,48 @@ def schema():
 def connector_policy():
     return {'instructions':(Path(__file__).parent/'MUSE_CONNECTOR_PROMPT.md').read_text(),
             'requires_user_instruction_to_apply':True}
+
+
+class RefreshRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    idempotency_key:str=Field(min_length=1,max_length=160)
+    reason:str=Field(min_length=1,max_length=500)
+    evidence_event_id:str|None=Field(default=None,max_length=512)
+
+
+@api.post('/sources/zjut/refresh',operation_id='request_academic_refresh')
+def request_academic_refresh(body:RefreshRequest):
+    with connection() as c:
+        c.execute('BEGIN IMMEDIATE')
+        old=c.execute('SELECT * FROM refresh_requests WHERE idempotency_key=?',(body.idempotency_key,)).fetchone()
+        if old:
+            if (old['reason'],old['evidence_event_id'])!=(body.reason,body.evidence_event_id):
+                raise HTTPException(409,'Idempotency key already belongs to a different request')
+            return refresh_item(old)
+        if body.evidence_event_id and not c.execute('SELECT 1 FROM events WHERE event_id=?',(body.evidence_event_id,)).fetchone():
+            raise HTTPException(409,'Unknown evidence event')
+        if c.execute("SELECT COUNT(*) FROM refresh_requests WHERE state IN ('queued','running')").fetchone()[0]>=100:
+            raise HTTPException(429,'Too many pending refresh requests')
+        identity=secrets.token_hex(16)
+        c.execute('INSERT INTO refresh_requests VALUES (?,?,?,?,?,?,?,?,?)',
+                  (identity,body.idempotency_key,body.reason,body.evidence_event_id,now(),'queued',None,None,None))
+        return refresh_item(c.execute('SELECT * FROM refresh_requests WHERE request_id=?',(identity,)).fetchone())
+
+
+def refresh_item(row):
+    result=dict(row)
+    result['result']=json.loads(result['result']) if result['result'] else None
+    result['status_path']='/v1/refresh-requests/'+row['request_id']
+    result['meaning']='queued is not proof of source refresh; inspect completed result'
+    return result
+
+
+@api.get('/refresh-requests/{request_id}',operation_id='get_refresh_result')
+def get_refresh_result(request_id:str):
+    with connection() as c:
+        row=c.execute('SELECT * FROM refresh_requests WHERE request_id=?',(request_id,)).fetchone()
+    if row is None:raise HTTPException(404,'Unknown refresh request')
+    return refresh_item(row)
 
 
 def event(row):

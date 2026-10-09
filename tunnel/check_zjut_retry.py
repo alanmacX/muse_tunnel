@@ -23,10 +23,10 @@ with tempfile.TemporaryDirectory() as tmp:
              patch.object(z.zjut,'_post_query',new=AsyncMock(return_value={'kbList':[]})), \
              patch.object(z,'fetch_exams',new=AsyncMock(return_value={'items':[],'totalCount':0})):
             assert await z.collect(force=True)=={'timetable':0,'exams':0}
-            assert state_get('zjut','retry_interval_seconds')=='1800'
+            assert state_get('zjut','retry_interval_seconds')=='86400'
             assert state_get('zjut','network_failure_count')=='0'
         with api.connection() as c:
             status=c.execute("SELECT state FROM source_status WHERE source='zjut'").fetchone()[0]
             assert status=='available'
-        print('PASS: timeout retries after 2 minutes, throttling, exponential backoff, successful recovery restores 30-minute polling')
+        print('PASS: timeout retries after 2 minutes, throttling, exponential backoff, successful recovery restores daily polling')
     asyncio.run(check())
