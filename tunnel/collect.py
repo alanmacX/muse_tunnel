@@ -14,6 +14,7 @@ SESSION_DB=os.environ.get('MUSE_SESSION_DB','data/sessions.db')
 
 from sanitize import clean
 from media import attachments,archive_file
+from chaoxing_media import collect_media
 
 def timestamp(ms):
     try:return datetime.fromtimestamp(float(ms)/1000,tz=timezone.utc).isoformat()
@@ -296,14 +297,18 @@ async def collect_chaoxing():
                 state_set(source,'coursework_status',json.dumps([course_count,assignments,components['coursework']]))
         if courses_data.get('hasMore'):
             components['coursework']={'available':False,'reason':'course_list_pagination_required'}
+        try:
+            components['media']=await collect_media(svc,courses_data)
+        except Exception as e:
+            components['media']={'available':False,'reason':type(e).__name__}
         active=[item for item in components.values() if item.get('enabled',True)]
         good=sum(item['available'] for item in active)
         update_status(source,'available' if good==len(active) else 'degraded' if good else 'unavailable',bool(good),
                       'authenticated_read_ok' if good==len(active) else 'partial_collection' if good else 'all_components_failed',
                       {'conversations':conversations,'observed_messages':counts,'notices':notices,
                        'courses':course_count,'assignments':assignments,'components':components,
-                       'coverage':'inbox_coursework_im_excluded','course_list_has_more':bool(courses_data.get('hasMore')),
-                       'history_retention':'upstream_defined','attachments':'references_only_not_downloaded'})
+                       'coverage':'inbox_coursework_recent_notice_and_course_files_im_excluded','course_list_has_more':bool(courses_data.get('hasMore')),
+                       'history_retention':'upstream_defined','attachments':'authenticated_recent_notice_and_course_files_with_explicit_failures'})
         return counts,notices,assignments
     except Exception as e:
         reason=str(e) if isinstance(e,RuntimeError) else type(e).__name__
