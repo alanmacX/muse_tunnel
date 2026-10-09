@@ -39,4 +39,4 @@ Bearer token 600、data 目录 700、关闭访问日志、API 仅监听 loopback
 - `.venv/bin/python check_zjut.py`：验证考试分页、真实空列表和错误检测。
 - 正方凭据仅通过SSH维护data/zjut-credentials.json和data/zjut-encryption.key，任何API都不返回它们。
 
-迁移给 Muse 的完整说明见 [MUSE_CONNECTOR_PROMPT.md](MUSE_CONNECTOR_PROMPT.md)。新 dataset_id=live-v1，不能复用 PoC 的 seq610 游标和旧本地消费账本。
+Muse 学生管家连接器的完整运行规则见 [MUSE_CONNECTOR_PROMPT.md](MUSE_CONNECTOR_PROMPT.md)。新 dataset_id=live-v1，不能复用 PoC 的 seq610 游标和旧本地消费账本。
