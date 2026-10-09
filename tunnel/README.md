@@ -50,3 +50,12 @@ Bearer token 600、data 目录 700、关闭访问日志、API 仅监听 loopback
 Muse 学生管家连接器的完整运行规则见 [MUSE_CONNECTOR_PROMPT.md](MUSE_CONNECTOR_PROMPT.md)。新 dataset_id=live-v1，不能复用 PoC 的 seq610 游标和旧本地消费账本。
 
 按需刷新：鉴权POST /v1/sources/zjut/refresh需要幂等键和核实原因，可关联触发事件；GET /v1/refresh-requests/{id}查看实际结果。请求合并后由现有采集任务执行，五分钟冷却内会排队，完成结果入feed，无内容diff不重发课表。跨进程锁避免重复登录；正常每天兜底，网络故障仍按退避重试。公开校方公告只读核实由Muse已有浏览能力完成，tunnel凭据只发往hajiqu.xyz。
+
+
+## 按需查询工具
+
+`/v1/tools/search`、`/v1/tools/events/{event_id}`、`/v1/tools/conversations` 在当前Custom Connector的OpenAPI中提供命名工具，使Muse按问题自主选择查历史、精确证据和会话/课程。工具处理函数可以由后续MCP适配层复用；当前这层是鉴权HTTP/OpenAPI工具接口，不声称支持MCP JSON-RPC协议。完整pending消费与每日核验继续独立运行，查询不自动回执。查询可见范围仍受原始采集覆盖限制。
+
+搜索支持source/q/conversation/kind/from_day/to_day，固定upper_seq后按after_seq分页，返回该快照内每个来源记录的最新版本；精确event_id可以回看旧版本。无日期的来源记录使用入账日期。来源健康随查询结果返回，所有工具沿用原专用Bearer，无命令执行、外部消息发送或任意URL下载权限。
+
+`.venv/bin/python check_agent_tools.py` 验证鉴权、并发修订下的快照、分页、过滤、字面关键词、旧版证据、会话统计和查询/回执分离。

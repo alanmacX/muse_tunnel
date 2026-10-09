@@ -392,10 +392,13 @@ def source_availability(c):
     return result
 
 
-@api.get('/sources')
 def sources_endpoint():
     with connection() as c:
         return {'timezone':'Asia/Shanghai','sources':source_availability(c)}
 
 # Router was registered above; register the sources endpoint explicitly.
-app.add_api_route('/v1/sources', sources_endpoint, methods=['GET'], dependencies=[Depends(authenticate)])
+app.add_api_route('/v1/sources', sources_endpoint, methods=['GET'], dependencies=[Depends(authenticate)], operation_id='get_source_availability')
+
+# Task-oriented read tools share the same ledger and authentication as the feed.
+from agent_tools import router as agent_tools_router
+app.include_router(agent_tools_router)
