@@ -13,6 +13,9 @@ for name in ('tunnel.db','sessions.db'):
 for name in ('consumer.key','zjut-credentials.json','zjut-encryption.key'):
     if Path('data/'+name).exists():
         shutil.copyfile('data/'+name,dest/name);(dest/name).chmod(0o600)
+if Path('data/media').exists():
+    # Media blobs are immutable; hardlinks retain them without duplicating disk usage.
+    shutil.copytree('data/media',dest/'media',copy_function=os.link)
 # Keep fourteen days of successful snapshots; initial migration archive is separate.
 cutoff=datetime.now(timezone.utc)-timedelta(days=14)
 for folder in root.iterdir():

@@ -10,7 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -61,6 +61,9 @@ def init():
           last_attempt TEXT NOT NULL, last_success TEXT, failures INTEGER NOT NULL,
           reason TEXT NOT NULL, details TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS source_state (source TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(source,key));
+        CREATE TABLE IF NOT EXISTS assets (
+          asset_id TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL, mime_type TEXT NOT NULL,
+          filename TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS delivered (
           consumer TEXT NOT NULL, seq INTEGER NOT NULL REFERENCES events(seq),
           PRIMARY KEY(consumer, seq));
@@ -151,6 +154,33 @@ def feed(after_seq: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200),
         return {'items': deliver(c, selected), 'upper_seq': upper, 'has_more': len(rows)>limit,
                 'next_cursor': selected[-1]['seq'] if selected else after_seq,
                 'restart_pending_scan_at': 0, 'sources': source_availability(c)}
+
+
+def find_asset(asset_id):
+    if len(asset_id) != 64 or any(ch not in '0123456789abcdef' for ch in asset_id):
+        raise HTTPException(404, 'Unknown file')
+    with connection() as c:
+        row = c.execute('SELECT * FROM assets WHERE asset_id=?', (asset_id,)).fetchone()
+    path = DB.parent / 'media' / asset_id
+    if row is None or not path.is_file() or path.is_symlink():
+        raise HTTPException(404, 'Unknown file')
+    return dict(row), path
+
+
+@api.get('/files/{asset_id}', operation_id='get_file_metadata',
+         description='Metadata for an archived attachment. Requires the consumer Bearer credential.')
+def file_metadata(asset_id: str):
+    row, _ = find_asset(asset_id)
+    return {**row, 'sha256': asset_id, 'download_path': '/v1/files/' + asset_id + '/content'}
+
+
+@api.get('/files/{asset_id}/content', response_class=FileResponse, operation_id='download_file',
+         description='Download an archived attachment as binary for multimodal reading; verify SHA-256 and size using metadata.',
+         responses={200: {'content': {'application/octet-stream': {'schema': {'type': 'string', 'format': 'binary'}}}}})
+def file_content(asset_id: str):
+    row, path = find_asset(asset_id)
+    return FileResponse(path, media_type=row['mime_type'], filename=row['filename'],
+                        content_disposition_type='attachment')
 
 
 @api.get('/events/{event_id:path}')

@@ -13,6 +13,7 @@ SESSION_DB=os.environ.get('MUSE_SESSION_DB','data/sessions.db')
 
 
 from sanitize import clean
+from media import attachments
 
 def timestamp(ms):
     try:return datetime.fromtimestamp(float(ms)/1000,tz=timezone.utc).isoformat()
@@ -75,21 +76,33 @@ def collect_dingtalk():
                     if mid is None or not cid:raise RuntimeError('message_identity_missing')
                     parsed=clean(normalized.get((cid,str(mid)),{}))
                     sent=timestamp(raw.get('createdAt'))
+                    cache_root=Path(os.environ.get('DINGTALK_DB_SOURCE','/home/ubuntu/.config/DingTalk'))
+                    media_roots=[folder for name in ('ImageFiles','AudioFiles','VideoFiles','QuickTransFiles','resource_cache')
+                                 for folder in cache_root.glob('*/'+name)]
+                    files=attachments(raw.get('content'), media_roots)
                     payload={'source':source,'kind':'message','source_id':str(mid),'conversation_id':cid,
                              'conversation':parsed.get('conversation_title') or cid,
                              'sent_at':sent,'text':parsed.get('text') or '',
                              'content_type':raw.get('contentType'),'raw':raw,'parsed':parsed,
-                             'attachment_status':'references_only' if raw.get('contentType') not in (1,2) else 'not_verified',
+                             'attachments':files,
+                             'attachment_status':('available' if files and all(f['status']=='available' for f in files)
+                                                  else 'incomplete' if files else 'none_detected'),
                              'synthetic':False}
                     inserted+=ingest(source,cid+':'+str(mid),payload,sent)
                     count+=1;latest=max(latest,int(raw.get('createdAt') or 0))
         transport=client_transport()
-        update_status(source,'available_local_cache' if transport['available'] else 'degraded',True,
-                      'client_cache_readable' if transport['available'] else transport['reason'],
+        login_lost=state_get(source,'login_required_since')
+        if login_lost and timestamp(latest) and timestamp(latest)>login_lost:
+            state_set(source,'login_required_since','')
+            login_lost=None
+        update_status(source,'degraded' if login_lost else 'available_local_cache' if transport['available'] else 'degraded',True,
+                      'login_required' if login_lost else 'client_cache_readable' if transport['available'] else transport['reason'],
                       {'observed_messages':count,'new_versions':inserted,'latest_source_message_at':timestamp(latest),
                        'client_running':alive,'upstream_connection':'unknown','coverage':'local_cache_only',
-                       'components':{'cache':{'available':True,'reason':'read_ok'},'transport':transport},
-                       'attachments':'raw_references_preserved_not_downloaded','client_version':'8.1.0.6021101'})
+                       'components':{'cache':{'available':True,'reason':'read_ok'},'transport':transport,
+                                     'authenticated_sync':{'available':False if login_lost else None,
+                                                           'reason':'login_required' if login_lost else 'not_verified'}},
+                       'attachments':'authenticated_files_when_cached_otherwise_explicitly_missing','client_version':'8.1.0.6021101'})
         return count,inserted
     except Exception as e:
         reason=str(e) if isinstance(e,(FileNotFoundError,RuntimeError)) and str(e) in {
