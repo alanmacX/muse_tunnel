@@ -1,0 +1,528 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+import struct
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger("dingtalk")
+
+
+class DingTalkDBNotReady(FileNotFoundError):
+    """Raised when the DingTalk DB exists but isn't usable yet (logged out / empty).
+
+    Subclasses FileNotFoundError so callers that already treat a missing DB as a
+    graceful "skip this sync" also handle the logged-out case the same way.
+    """
+
+# DingTalk's AES-128-ECB DB key. It is NOT stable across DingTalk versions — a
+# client update can rotate it, which silently breaks decryption ("file is not a
+# database"). Rather than hardcode a value that rots, we resolve the key
+# dynamically and self-heal:
+#   1. DINGTALK_AES_KEY env var (operator override / warm cache), else
+#   2. ask the host QR helper to recover it from the live DingTalk process
+#      memory using the known-plaintext SQLite header as an oracle.
+# The result is cached in-process; on a decrypt failure we force a rediscover,
+# so a version bump that rotates the key recovers with no manual intervention.
+_LEGACY_KEY = "9f6ac1b97a9021bd"  # worked for older DingTalk builds; last resort
+_key_cache: Dict[str, Optional[bytes]] = {"key": None}
+
+
+def _key_from_env() -> Optional[bytes]:
+    raw = os.getenv("DINGTALK_AES_KEY", "")
+    if not raw:
+        return None
+    # Accept either a 16-char ASCII key or 32 hex chars.
+    if len(raw) == 32:
+        try:
+            return bytes.fromhex(raw)
+        except ValueError:
+            pass
+    return raw.encode()
+
+
+def _fetch_key_from_helper() -> Optional[bytes]:
+    """Ask the host QR helper to recover the current AES key from DingTalk's
+    process memory. The helper returns it as 32 hex chars (key_hex)."""
+    import httpx
+    if not QR_SERVICE_URL:
+        return None
+    try:
+        with httpx.Client(timeout=60.0) as client:
+            r = client.get(f"{QR_SERVICE_URL}/aes-key")
+            if r.status_code == 200:
+                key_hex = r.json().get("key_hex")
+                if key_hex:
+                    return bytes.fromhex(key_hex)
+    except Exception as exc:
+        logger.warning("AES key discovery via helper failed: %s", exc)
+    return None
+
+
+def get_aes_key(force_rediscover: bool = False) -> bytes:
+    """Resolve the AES key, preferring cache, then env, then live discovery."""
+    if not force_rediscover and _key_cache["key"]:
+        return _key_cache["key"]
+    if not force_rediscover:
+        env = _key_from_env()
+        if env:
+            _key_cache["key"] = env
+            return env
+    discovered = _fetch_key_from_helper()
+    if discovered:
+        _key_cache["key"] = discovered
+        logger.info("Recovered DingTalk AES key from live process via helper")
+        return discovered
+    # Nothing worked: fall back to env or the legacy key so we at least try.
+    return _key_cache["key"] or _key_from_env() or _LEGACY_KEY.encode()
+
+def _discover_db_path() -> str:
+    """Auto-discover the DingTalk SQLite DB by globbing the config dir.
+
+    Supports two env var patterns:
+      DINGTALK_DB_SOURCE=/path/to/dingtalk.db   — explicit file path (legacy)
+      DINGTALK_DB_SOURCE=/dingtalk_cfg           — config dir, glob for *_v3/DBFiles/dingtalk.db
+    """
+    import glob
+    raw = os.getenv("DINGTALK_DB_SOURCE", "")
+    if raw and not raw.endswith("/") and Path(raw).suffix == ".db":
+        return raw  # explicit file path
+
+    # Glob inside a config directory (new default: /dingtalk_cfg mounted in docker)
+    cfg_dir = raw.rstrip("/") if raw else "/dingtalk_cfg"
+    candidates = sorted(glob.glob(f"{cfg_dir}/*_v3/DBFiles/dingtalk.db"))
+    if candidates:
+        return candidates[0]
+
+    # Fallback: host path (when running outside docker)
+    host_candidates = sorted(glob.glob(
+        "/root/.config/DingTalk/*_v3/DBFiles/dingtalk.db"
+    ))
+    return host_candidates[0] if host_candidates else ""
+
+# NB: the DB path is resolved lazily via _discover_db_path() at call time
+# (see decrypt_db_to_tmp), never cached at import — the container can start
+# before DingTalk has written its DB.
+DECRYPTED_DB_PATH = os.getenv("DINGTALK_DECRYPTED_PATH", "/tmp/dingtalk_decrypted.db")
+PAGE_SIZE = int(os.getenv("DINGTALK_PAGE_SIZE", "4096"))
+WAL_HDR_SIZE = 32
+FRAME_HDR_SIZE = 24
+
+# Screenshot helper service on the host (started by install.sh / systemd)
+QR_SERVICE_URL = os.getenv("DINGTALK_QR_SERVICE", "")
+
+
+# ── Login-status TTL cache (avoids decrypting DB every 2.5s) ─────────────────
+_login_cache: dict = {"value": None, "ts": 0}
+_LOGIN_CACHE_TTL = 15  # seconds
+
+
+def is_dingtalk_logged_in() -> bool:
+    """True when a DingTalk account DB exists and has user profile data.
+
+    Globs for the account-scoped *_v3 directory under the config mount,
+    then decrypts the DB and checks tbuser_profile_v2.
+    This is intentionally a session/profile check, not a message-activity
+    check: quiet DingTalk periods can leave the DB/WAL untouched for many
+    hours while the client is still logged in.
+    Results are cached for 15 seconds to avoid re-decrypting on every poll.
+    """
+    import time
+    now = time.time()
+    if now - _login_cache["ts"] < _LOGIN_CACHE_TTL and _login_cache["value"] is not None:
+        return _login_cache["value"]
+
+    import glob
+    cfg_dir = os.getenv("DINGTALK_DB_SOURCE", "/dingtalk_cfg").rstrip("/")
+    if cfg_dir.endswith(".db"):
+        cfg_dir = str(Path(cfg_dir).parent.parent.parent)
+
+    account_dirs = glob.glob(f"{cfg_dir}/*_v3")
+    if not account_dirs:
+        account_dirs = glob.glob("/root/.config/DingTalk/*_v3")
+    if not account_dirs:
+        _login_cache["value"] = False
+        _login_cache["ts"] = now
+        return False
+
+    db = Path(account_dirs[0]) / "DBFiles" / "dingtalk.db"
+    if not db.exists():
+        _login_cache["value"] = False
+        _login_cache["ts"] = now
+        return False
+
+    try:
+        decrypted = decrypt_db_to_tmp(str(db))
+        conn = sqlite3.connect(decrypted)
+        count = conn.execute("SELECT COUNT(*) FROM tbuser_profile_v2").fetchone()[0]
+        conn.close()
+        result = count > 0
+    except Exception:
+        result = False
+
+    _login_cache["value"] = result
+    _login_cache["ts"] = now
+    return result
+
+
+async def fetch_qr_screenshot() -> bytes | None:
+    """Fetch a PNG screenshot from the host-side QR helper service.
+
+    Returns raw PNG bytes, or None if the service is unreachable.
+    """
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{QR_SERVICE_URL}/screenshot")
+            if r.status_code == 200:
+                return r.content
+    except Exception:
+        pass
+    return None
+
+
+async def click_qr_refresh() -> dict:
+    """Ask the host-side QR service to click the refresh button in DingTalk window."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.post(f"{QR_SERVICE_URL}/refresh-qr")
+            if r.status_code == 200:
+                return r.json()
+            return {"ok": False, "error": f"HTTP {r.status_code}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _aes_cipher(key: Optional[bytes] = None):
+    try:
+        from Crypto.Cipher import AES
+    except Exception as exc:  # pragma: no cover - depends on deployment image
+        raise RuntimeError(
+            "pycryptodome is required for DingTalk DB decryption. "
+            "Install it with: pip install pycryptodome"
+        ) from exc
+    return AES.new(key or get_aes_key(), AES.MODE_ECB)
+
+
+def decrypt_page(page_data: bytes, cipher: Optional[Any] = None) -> bytes:
+    if len(page_data) % 16 != 0:
+        raise ValueError(f"encrypted page size must be a multiple of 16, got {len(page_data)}")
+    # AES-ECB has no chaining between 16-byte blocks, so decrypting the whole
+    # page in one call is identical to per-block decryption but ~36x faster
+    # (2.66s -> 0.07s on the 11MB WAL). The ECB cipher object is stateless and
+    # safe to reuse across pages.
+    cipher = cipher or _aes_cipher()
+    return cipher.decrypt(page_data)
+
+
+def decrypt_db_to_tmp(
+        source_path: Optional[str] = None,
+        wal_path: Optional[str] = None,
+        output_path: str = DECRYPTED_DB_PATH,
+) -> str:
+    """Decrypt the DingTalk SQLite DB and apply WAL frames into a temp DB path."""
+    # Discover the DB path at call time, not import time: the backend container
+    # may start before DingTalk has created its DB (startup race), which would
+    # otherwise cache an empty path forever.
+    if source_path is None:
+        source_path = _discover_db_path()
+    if not source_path:
+        raise FileNotFoundError("DingTalk DB not found: no *_v3/DBFiles/dingtalk.db discovered")
+    wal_path = wal_path if wal_path is not None else source_path + "-wal"
+    source = Path(source_path)
+    output = Path(output_path)
+
+    if not source.exists():
+        raise FileNotFoundError(f"DingTalk DB not found: {source}")
+    if not source.is_file():
+        raise FileNotFoundError(f"DingTalk DB path is not a file: {source}")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    def _attempt(cipher) -> Tuple[Path, bytes]:
+        """Decrypt main pages + apply WAL with `cipher`; return (tmp_path, magic)."""
+        tmp_output = output.with_name(f"{output.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+        try:
+            with source.open("rb") as src, tmp_output.open("wb") as dst:
+                while True:
+                    page = src.read(PAGE_SIZE)
+                    if not page:
+                        break
+                    if len(page) != PAGE_SIZE:
+                        logger.warning("Ignoring partial DingTalk DB page of %s bytes", len(page))
+                        break
+                    dst.write(decrypt_page(page, cipher))
+            _apply_wal_frames(tmp_output, wal_path, cipher)
+            with tmp_output.open("rb+") as db_file:
+                magic = db_file.read(16)
+                db_file.flush()
+                os.fsync(db_file.fileno())
+            return tmp_output, magic
+        except Exception:
+            tmp_output.unlink(missing_ok=True)
+            raise
+
+    # Does the DB actually hold account data? An empty (logged-out) session is a
+    # ~1-page main DB with a stub WAL — a non-SQLite header there just means "not
+    # logged in", NOT a rotated key, so we must NOT trigger a (costly) key rescan.
+    wal_file = Path(wal_path)
+    has_data = source.stat().st_size > PAGE_SIZE or (
+        wal_file.exists() and wal_file.stat().st_size > WAL_HDR_SIZE + FRAME_HDR_SIZE + PAGE_SIZE
+    )
+
+    tmp_output, magic = _attempt(_aes_cipher())
+
+    # A bad header with real data present means the cached/env key no longer
+    # matches (e.g. a DingTalk update rotated it). Force-rediscover the key from
+    # the live process and retry once — this is the self-healing path.
+    if magic != b"SQLite format 3\x00" and has_data:
+        tmp_output.unlink(missing_ok=True)
+        new_key = get_aes_key(force_rediscover=True)
+        tmp_output, magic = _attempt(_aes_cipher(new_key))
+
+    try:
+        # Validate before publishing: a non-SQLite header now means the account
+        # is genuinely logged out / empty (or the key truly couldn't be found).
+        # DingTalkDBNotReady subclasses FileNotFoundError so the sync task treats
+        # it as a graceful skip rather than a crash.
+        if magic != b"SQLite format 3\x00":
+            raise DingTalkDBNotReady(
+                f"Decrypted DingTalk DB is not a valid SQLite file "
+                f"(header={magic!r}); DingTalk is likely logged out or the DB is empty"
+            )
+        os.replace(tmp_output, output)
+    finally:
+        try:
+            tmp_output.unlink()
+        except FileNotFoundError:
+            pass
+
+    return str(output)
+
+
+def _apply_wal_frames(output: Path, wal_path: str, cipher: Any) -> int:
+    """Apply committed WAL frames onto the decrypted DB.
+
+    A WAL file can hold frames from more than one checkpoint generation. Each
+    generation has its own salt (bytes 16..24 of the WAL header); frames whose
+    salt does not match the *current* header are leftovers from a previous
+    generation and must NOT be applied — doing so corrupts the page image and
+    yields a "file is not a database" error. We therefore stop at the first
+    frame whose salt diverges, and only commit pages up to the last commit
+    frame (db_size_after_commit != 0) so a half-written transaction at the tail
+    of the WAL is ignored.
+    """
+    wal = Path(wal_path)
+    if not wal.exists() or wal.stat().st_size <= WAL_HDR_SIZE:
+        return 0
+
+    with wal.open("rb") as wal_file, output.open("r+b") as dst:
+        wal_header = wal_file.read(WAL_HDR_SIZE)
+        if len(wal_header) < WAL_HDR_SIZE:
+            return 0
+        # WAL header salt occupies bytes 16..24; frame header salt occupies
+        # bytes 8..16. Frames are valid only while their salt matches.
+        header_salt = wal_header[16:24]
+
+        # First pass: collect valid frames belonging to the current generation,
+        # remembering where the last committed transaction ends.
+        pending: List[Tuple[int, bytes]] = []
+        committed_upto = 0  # index into `pending` (exclusive) of last commit
+        applied = 0
+        while True:
+            header = wal_file.read(FRAME_HDR_SIZE)
+            if len(header) < FRAME_HDR_SIZE:
+                break
+            page = wal_file.read(PAGE_SIZE)
+            if len(page) < PAGE_SIZE:
+                break
+
+            if header[8:16] != header_salt:
+                break  # leftover frame from a previous WAL generation
+
+            page_no = struct.unpack(">I", header[:4])[0]
+            db_size_after_commit = struct.unpack(">I", header[4:8])[0]
+            if page_no > 0:
+                pending.append((page_no, page))
+            if db_size_after_commit != 0:
+                committed_upto = len(pending)  # this frame commits a txn
+
+        for page_no, page in pending[:committed_upto]:
+            dst.seek((page_no - 1) * PAGE_SIZE)
+            dst.write(decrypt_page(page, cipher))
+            applied += 1
+    return applied
+
+
+def _connect_readonly(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> Set[str]:
+    if not _table_exists(conn, table_name):
+        return set()
+    return {row["name"] for row in conn.execute(f'PRAGMA table_info("{table_name}")')}
+
+
+def _message_tables(conn: sqlite3.Connection) -> List[str]:
+    existing = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'tbmsg_%'"
+        )
+    }
+    return [name for name in (f"tbmsg_{i:03d}" for i in range(128)) if name in existing]
+
+
+def _safe_json_text(raw_content: Any) -> Optional[str]:
+    if raw_content is None:
+        return None
+    if isinstance(raw_content, bytes):
+        return raw_content.decode("utf-8", errors="replace")
+    return str(raw_content)
+
+
+def _extract_text_and_type(
+        raw_content: Any,
+        fallback_content_type: Any,
+) -> Tuple[Optional[int], Optional[str]]:
+    raw = _safe_json_text(raw_content)
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception:
+        return _int_or_none(fallback_content_type), raw
+
+    content_type = _int_or_none(payload.get("contentType", fallback_content_type))
+    text = payload.get("text")
+    if text is None:
+        text = payload.get("content")
+    if isinstance(text, (dict, list)):
+        text = json.dumps(text, ensure_ascii=False)
+    elif text is not None:
+        text = str(text)
+    return content_type, text
+
+
+def _int_or_none(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_message(row: sqlite3.Row) -> Dict[str, Any]:
+    content_type, text = _extract_text_and_type(row["content"], row["contentType"])
+    return {
+        "mid": _int_or_none(row["mid"]),
+        "cid": row["cid"],
+        "conversation_title": row["conversation_title"],
+        "sender_id": _int_or_none(row["senderId"]),
+        "sender_name": row["sender_name"],
+        "content_type": content_type,
+        "text": text,
+        "raw_content": _safe_json_text(row["content"]),
+        "created_at": _int_or_none(row["createdAt"]) or 0,
+    }
+
+
+def get_new_messages(since_timestamp: int) -> List[Dict[str, Any]]:
+    """Decrypt latest DB state and return messages with createdAt > since_timestamp."""
+    db_path = decrypt_db_to_tmp()
+    with _connect_readonly(db_path) as conn:
+        return query_new_messages(conn, since_timestamp)
+
+
+def query_new_messages(conn: sqlite3.Connection, since_timestamp: int) -> List[Dict[str, Any]]:
+    tables = _message_tables(conn)
+    if not tables:
+        return []
+
+    union_sql = " UNION ALL ".join(
+        f'SELECT mid, cid, senderId, contentType, content, createdAt FROM "{table}" WHERE createdAt > ?'
+        for table in tables
+    )
+    params = [since_timestamp] * len(tables)
+
+    has_conversation = _table_exists(conn, "tbconversation")
+    user_columns = _table_columns(conn, "tbuser_profile_v2")
+    has_user = {"uid", "nick"}.issubset(user_columns)
+
+    conversation_join = (
+        "LEFT JOIN tbconversation c ON c.cid = m.cid" if has_conversation else ""
+    )
+    user_join = (
+        "LEFT JOIN tbuser_profile_v2 u ON CAST(u.uid AS TEXT) = CAST(m.senderId AS TEXT)"
+        if has_user
+        else ""
+    )
+    conversation_title_expr = "c.title" if has_conversation else "NULL"
+    sender_name_expr = "u.nick" if has_user else "NULL"
+
+    sql = f"""
+        WITH m AS ({union_sql})
+        SELECT
+            m.mid,
+            m.cid,
+            {conversation_title_expr} AS conversation_title,
+            m.senderId,
+            {sender_name_expr} AS sender_name,
+            m.contentType,
+            m.content,
+            m.createdAt
+        FROM m
+        {conversation_join}
+        {user_join}
+        ORDER BY m.createdAt ASC, m.mid ASC
+    """
+    return [_normalize_message(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def get_conversations() -> List[Dict[str, Any]]:
+    db_path = decrypt_db_to_tmp()
+    with _connect_readonly(db_path) as conn:
+        if not _table_exists(conn, "tbconversation"):
+            return []
+        rows = conn.execute(
+            """
+            SELECT cid, title, unreadCount, lastModify
+            FROM tbconversation
+            ORDER BY lastModify DESC
+            """
+        ).fetchall()
+        return [
+            {
+                "cid": row["cid"],
+                "title": row["title"],
+                "unreadCount": _int_or_none(row["unreadCount"]) or 0,
+                "lastModify": _int_or_none(row["lastModify"]) or 0,
+            }
+            for row in rows
+        ]
+
+
+def get_max_message_timestamp() -> int:
+    db_path = decrypt_db_to_tmp()
+    with _connect_readonly(db_path) as conn:
+        tables = _message_tables(conn)
+        if not tables:
+            return 0
+        union_sql = " UNION ALL ".join(f'SELECT MAX(createdAt) AS max_created_at FROM "{t}"' for t in tables)
+        row = conn.execute(f"SELECT MAX(max_created_at) AS max_created_at FROM ({union_sql})").fetchone()
+        return _int_or_none(row["max_created_at"] if row else None) or 0

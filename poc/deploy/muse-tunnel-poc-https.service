@@ -1,0 +1,18 @@
+[Unit]
+Description=Temporary HTTPS tunnel for Muse synthetic PoC
+After=network-online.target muse-tunnel-poc.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+ExecStart=/usr/local/bin/cloudflared --config /home/ubuntu/muse-tunnel-poc/deploy/quick-config.yml tunnel --no-autoupdate --protocol http2 --url http://127.0.0.1:18765 --metrics 127.0.0.1:20242
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+MemoryMax=192M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Refresh synthetic daily manifests and late revisions
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/muse-tunnel-poc
+Environment=MUSE_POC_DB=/home/ubuntu/muse-tunnel-poc/data/poc.db
+Environment=MUSE_POC_KEY_FILE=/home/ubuntu/muse-tunnel-poc/data/consumer.key
+ExecStart=/home/ubuntu/muse-tunnel-poc/.venv/bin/python provision.py refresh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/muse-tunnel-poc/data

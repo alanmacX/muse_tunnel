@@ -1,0 +1,21 @@
+[Unit]
+Description=Archive raw Chaoxing and DingTalk observations
+After=network-online.target dingtalk.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/muse-tunnel
+Environment=DINGTALK_DB_SOURCE=/home/ubuntu/.config/DingTalk
+Environment=DINGTALK_DECRYPTED_PATH=/home/ubuntu/muse-tunnel/data/dingtalk-snapshot.db
+ExecStart=/home/ubuntu/muse-tunnel/.venv/bin/python collect.py
+TimeoutStartSec=900
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/muse-tunnel/data
+MemoryMax=384M
+TasksMax=64

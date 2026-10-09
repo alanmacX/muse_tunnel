@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh daily packages every minute for the PoC
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+Unit=muse-tunnel-poc-daily.service
+
+[Install]
+WantedBy=timers.target

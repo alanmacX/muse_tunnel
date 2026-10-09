@@ -1,0 +1,22 @@
+[Unit]
+Description=Private Muse data tunnel
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/muse-tunnel
+ExecStart=/home/ubuntu/muse-tunnel/.venv/bin/uvicorn api:create_app --factory --host 127.0.0.1 --port 18767 --no-access-log
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/muse-tunnel/data
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

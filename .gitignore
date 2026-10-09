@@ -23,3 +23,14 @@ dist/
 
 # IDE
 .claude/
+
+# Muse tunnel PoC runtime credentials and ledger
+poc/data/
+poc/.venv/
+poc/__pycache__/
+poc/muse_tunnel/__pycache__/
+
+# Real tunnel private runtime
+tunnel/data/
+tunnel/.venv/
+tunnel/backup/

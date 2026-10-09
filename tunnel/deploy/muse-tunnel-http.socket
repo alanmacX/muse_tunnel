@@ -1,0 +1,8 @@
+[Unit]
+Description=Loopback origin for existing hajiqu.xyz Cloudflare route
+[Socket]
+ListenStream=127.0.0.1:80
+ListenStream=[::1]:80
+NoDelay=true
+[Install]
+WantedBy=sockets.target

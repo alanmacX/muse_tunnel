@@ -1,0 +1,10 @@
+[Unit]
+Description=Collect messages once per minute without overlapping runs
+
+[Timer]
+OnBootSec=20s
+OnUnitInactiveSec=60s
+Unit=muse-tunnel-collect.service
+
+[Install]
+WantedBy=timers.target

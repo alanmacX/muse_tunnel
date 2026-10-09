@@ -1,0 +1,24 @@
+[Unit]
+Description=Muse tunnel synthetic PoC API
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/muse-tunnel-poc
+Environment=MUSE_POC_DB=/home/ubuntu/muse-tunnel-poc/data/poc.db
+Environment=MUSE_POC_KEY_FILE=/home/ubuntu/muse-tunnel-poc/data/consumer.key
+ExecStart=/home/ubuntu/muse-tunnel-poc/.venv/bin/uvicorn muse_tunnel.app:create_app --factory --host 127.0.0.1 --port 18765 --no-access-log
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/muse-tunnel-poc/data
+MemoryMax=192M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

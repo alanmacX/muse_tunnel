@@ -1,0 +1,11 @@
+[Unit]
+Description=Block external access to DingTalk local client port
+Before=dingtalk.service
+After=network-pre.target
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/bin/sh -c '/usr/sbin/iptables -C INPUT -p tcp --dport 5556 ! -s 127.0.0.0/8 -j REJECT 2>/dev/null || /usr/sbin/iptables -I INPUT -p tcp --dport 5556 ! -s 127.0.0.0/8 -j REJECT'
+ExecStart=/bin/sh -c '/usr/sbin/ip6tables -C INPUT -p tcp --dport 5556 ! -s ::1/128 -j REJECT 2>/dev/null || /usr/sbin/ip6tables -I INPUT -p tcp --dport 5556 ! -s ::1/128 -j REJECT'
+[Install]
+WantedBy=multi-user.target

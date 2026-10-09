@@ -1,0 +1,17 @@
+[Unit]
+Description=Pinned DingTalk Linux client for Muse tunnel
+After=dingtalk-xvfb.service
+Requires=dingtalk-xvfb.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 2
+User=ubuntu
+Environment=HOME=/home/ubuntu DISPLAY=:99
+ExecStart=/home/ubuntu/muse-tunnel/deploy/start-dingtalk.sh
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Private consistent Muse ledger backup
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/muse-tunnel
+ExecStart=/home/ubuntu/muse-tunnel/.venv/bin/python backup.py
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/muse-tunnel/data
