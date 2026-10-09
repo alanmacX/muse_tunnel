@@ -74,6 +74,14 @@ def collect_dingtalk():
                 for row in c.execute(f'SELECT * FROM "{table}"'):
                     raw=clean(dict(row));mid=raw.get('mid');cid=str(raw.get('cid',''))
                     if mid is None or not cid:raise RuntimeError('message_identity_missing')
+                    with connection() as ledger:
+                        retired=ledger.execute('''SELECT r.raw_hash FROM retention r JOIN events e ON e.seq=r.seq
+                          WHERE e.source=? AND e.source_id=? AND r.state IN ('quarantined','purged')
+                          AND e.seq=(SELECT MAX(seq) FROM events WHERE source=? AND source_id=?)''',
+                          (source,cid+':'+str(mid),source,cid+':'+str(mid))).fetchone()
+                    if retired and retired['raw_hash']==digest(raw):
+                        count+=1;latest=max(latest,int(raw.get('createdAt') or 0))
+                        continue
                     parsed=clean(normalized.get((cid,str(mid)),{}))
                     sent=timestamp(raw.get('createdAt'))
                     cache_root=Path(os.environ.get('DINGTALK_DB_SOURCE','/home/ubuntu/.config/DingTalk'))

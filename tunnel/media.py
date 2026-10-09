@@ -35,17 +35,6 @@ def archive_file(candidate, roots):
     root = media_root()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     target = root / asset_id
-    if not target.exists():
-        temporary = root / ('.' + secrets.token_hex(16))
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(fd, 'wb') as out:
-                out.write(data)
-                out.flush()
-                os.fsync(out.fileno())
-            os.replace(temporary, target)
-        finally:
-            temporary.unlink(missing_ok=True)
     # Use signatures rather than trusting a source-provided MIME or extension.
     mime = 'application/octet-stream'
     for signature, kind in ((b'%PDF-', 'application/pdf'), (b'\x89PNG\r\n\x1a\n', 'image/png'),
@@ -58,7 +47,22 @@ def archive_file(candidate, roots):
         mime = 'image/webp'
     filename = re.sub(r'[^\w. ()-]', '_', resolved.name)[:180] or asset_id
     with connection() as c:
-        c.execute('INSERT OR IGNORE INTO assets VALUES (?,?,?,?,?)',
+        c.execute('BEGIN IMMEDIATE')
+        if not target.exists():
+            temporary = root / ('.' + secrets.token_hex(16))
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, 'wb') as out:
+                    out.write(data)
+                    out.flush()
+                    os.fsync(out.fileno())
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        # Renew the lease before GC can run; protects a newly observed shared blob
+        # during the short interval before its message is ingested.
+        c.execute('''INSERT INTO assets VALUES (?,?,?,?,?) ON CONFLICT(asset_id)
+          DO UPDATE SET created_at=excluded.created_at''',
                   (asset_id, len(data), mime, filename, now()))
     return {'status': 'available', 'asset_id': asset_id, 'sha256': asset_id,
             'size_bytes': len(data), 'mime_type': mime, 'filename': filename,

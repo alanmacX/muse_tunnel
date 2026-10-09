@@ -1,0 +1,12 @@
+[Unit]
+Description=Expire previously approved Muse retention quarantines
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/muse-tunnel
+ExecStart=/home/ubuntu/muse-tunnel/.venv/bin/python retention.py
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/muse-tunnel/data

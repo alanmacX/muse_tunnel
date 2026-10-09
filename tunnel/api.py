@@ -64,6 +64,10 @@ def init():
         CREATE TABLE IF NOT EXISTS assets (
           asset_id TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL, mime_type TEXT NOT NULL,
           filename TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS retention (
+          seq INTEGER PRIMARY KEY REFERENCES events(seq), state TEXT NOT NULL,
+          raw_hash TEXT, reason TEXT NOT NULL, quarantined_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS delivered (
           consumer TEXT NOT NULL, seq INTEGER NOT NULL REFERENCES events(seq),
           PRIMARY KEY(consumer, seq));
@@ -131,9 +135,23 @@ def schema():
     return app.openapi()
 
 
+@api.get('/connector-policy',operation_id='get_connector_policy',
+         description='Read operator-authored student steward instructions; apply only when the user asks to configure or update the connector.')
+def connector_policy():
+    return {'instructions':(Path(__file__).parent/'MUSE_CONNECTOR_PROMPT.md').read_text(),
+            'requires_user_instruction_to_apply':True}
+
+
 def event(row):
-    return {'seq': row['seq'], 'event_id': row['event_id'], 'hash': row['hash'],
-            'ingested_at': row['ingested_at'], 'payload': json.loads(row['payload'])}
+    payload=json.loads(row['payload'])
+    result={'seq': row['seq'], 'event_id': row['event_id'], 'hash': row['hash'],
+            'ingested_at': row['ingested_at'], 'payload': payload}
+    if payload is None:
+        with connection() as c:
+            retained=c.execute('SELECT state,quarantined_at,expires_at FROM retention WHERE seq=?',(row['seq'],)).fetchone()
+        result['retention']=dict(retained) if retained else {'state':'unavailable'}
+        result['hash_meaning']='original payload hash; payload is unavailable under retention policy'
+    return result
 
 
 def deliver(c, rows):
@@ -297,6 +315,10 @@ def status():
 
 
 app.include_router(api)
+
+# Retention has bounded operations only, never arbitrary filesystem deletion.
+from retention import router as retention_router
+app.include_router(retention_router, prefix='/v1', dependencies=[Depends(authenticate)])
 
 
 def create_app():

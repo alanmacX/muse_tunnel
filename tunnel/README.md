@@ -29,6 +29,8 @@ API 原生 systemd 运行于 127.0.0.1:18767；systemd socket proxy 在 loopback
 
 ## 安全与操作
 
+清理：由Muse每周判断无后续用途的消息，鉴权`GET /v1/cleanup/candidates`提供分页候选；`POST /v1/cleanup`默认仅预览，dry_run=false才隔离正文。服务器限定入账超过90天、已回执、来源日期和观察日期最新daily均已audit的message；课表、考试、课程、作业、健康状态不在可清理类型。正文压缩保留14天供`POST /v1/cleanup/restore`恢复，之后每日03:30自动过期删除；超过90天未再观察且不被有效/可恢复消息引用的归档文件回收。ID/hash/回执/manifest永久保留作幂等和审计索引，已清理正文payload=null、retention明确状态，原hash不能用于验证null。原始来源数据库/客户端登录态和密钥不删除，已有备份副本随14天保留期过期。Muse工作区清理与周日03:45任务由连接器规则要求，但需Muse实际创建并返回任务ID后才能确认已启用。
+
 Bearer token 600、data 目录 700、关闭访问日志、API 仅监听 loopback；旧公开二维码/密钥辅助服务已关闭，维护只通过 SSH 的 local_admin.py。Cloudflare tunnel token 已迁入 root-only token-file，不再写进启动参数。钉钉客户端5556端口禁止外部访问。公网 TLS 在 Cloudflare 终止，因此 Cloudflare、服务器管理员及持有 token 的主体属于信任边界；这是凭据访问控制，不是 Muse 身份的密码学证明。凭据不要放进消息正文。
 
 - `sudo systemctl status muse-tunnel muse-tunnel-collect.timer`
