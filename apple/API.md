@@ -55,3 +55,5 @@ Live Activity只允许emergency：已核实、明确影响本人、现在必须�
 这控制额外模型工作，不承诺精确token上限；平台任务prompt长度、模型缓存及工具日志是否进入上下文仍由Muse执行环境决定。须确认其消费脚本实际接入、能持久化缓存且无变化时不回显全量计划；服务器policy更新不等于Muse脚本自动改好。
 
 课程由Muse维护，服务器不从正方自动推导。必须显式发布完整课程数组；缺失返回422，不默认为无课。进行中的课程保留到end_at，状态in_progress；未来课程为upcoming。
+
+小号两列设计提供派生字段：display_date、display_course_1_time/location、display_course_2_time/location、display_widget_footer。维护接口无变化；时间槽在进行中时为“进行中”，地点槽保留完整地点；空计划未确认为“待补齐”，非ready空视图为“待同步”。footer采用短文本，但原stale/valid_until仍用于客户端缓存过期校验。

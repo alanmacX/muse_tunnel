@@ -222,6 +222,19 @@ def get_apple_dashboard():
         courses=result['courses'];important=result['important_events']
         result['display_course_'+str(n)]=(('进行中 ' if courses[n-1]['status']=='in_progress' else courses[n-1]['time']+' ')+courses[n-1]['location']) if len(courses)>=n else (('课程安排待 Muse 补齐' if result['courses_need_publication'] else '今日课程已结束或无课') if n==1 and result['status']=='ready' else '')
         result['display_important_'+str(n)]=important[n-1]['title'] if len(important)>=n else ''
+    result['display_date']=datetime.now(LOCAL).strftime('%m.%d')
+    for n in (1,2):
+        courses=result['courses']
+        if len(courses)>=n:
+            item=courses[n-1]
+            result['display_course_'+str(n)+'_time']='进行中' if item['status']=='in_progress' else item['time']
+            result['display_course_'+str(n)+'_location']=item['location']
+        else:
+            result['display_course_'+str(n)+'_time']=('待补齐' if result['courses_need_publication'] else '无剩余课' if result['status']=='ready' else '待同步') if n==1 else ''
+            result['display_course_'+str(n)+'_location']=''
+    short='过期' if result['stale'] else '待补齐' if result['courses_need_publication'] else '待核实' if result['status']!='ready' or result['source_issues'] else '核对'
+    if result['maintained_at']:short+=' '+datetime.fromisoformat(result['maintained_at']).astimezone(LOCAL).strftime('%H:%M')
+    result['display_widget_footer']=short
     result['display_courses_more']='另有 '+str(result['remaining_courses_count'])+' 节' if result['remaining_courses_count'] else ''
     return result
 

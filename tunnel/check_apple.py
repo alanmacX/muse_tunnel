@@ -41,6 +41,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert created.json()['revision']==1 and created.json()['changed']
     assert post(body).json()['changed'] is False
     result=get().json();assert len(result['courses'])==2 and result['remaining_courses_count']==1 and len(result['important_events'])==1
+    assert result['display_course_1_time']=='09:00' and result['display_course_1_location']=='Room 1'
+    assert len(result['display_widget_footer'])<=12
     assert len(get('/v1/apple/live-activities').json()['live_activities'])==1
     assert 'evidence' not in result['courses'][0] and 'content' not in result
     assert get('/v1/apple/watch').json()['courses']==result['courses']
@@ -63,6 +65,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # An ongoing course stays visible until its end, without another Muse write.
     fixed+=timedelta(minutes=44)
     current=get().json();assert current['courses'][0]['id']=='course-1' and current['courses'][0]['status']=='in_progress'
+    assert current['display_course_1_time']=='进行中'
     fixed+=timedelta(minutes=30)
     current=get().json();assert current['courses'][0]['id']=='course-2' and current['remaining_courses_count']==0
     assert get('/v1/apple/live-activities').json()['live_activities']==[]
