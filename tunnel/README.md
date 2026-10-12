@@ -70,3 +70,6 @@ Muse 学生管家连接器的完整运行规则见 [MUSE_CONNECTOR_PROMPT.md](MU
 所有Widgy文本字段由结构化数据派生：display_title、display_course_1/2、display_important_1/2、display_courses_more、display_freshness。没有课程时，只有ready才显示“今日无待上课程”；未初始化为awaiting_muse，不能误称没有安排。state给Muse提供完整计划，设备视图不暴露evidence/hash及原消息。SQLite备份自然包含apple_dashboard表。
 
 `.venv/bin/python check_apple.py`：验证设备最小权限、撤销、证据、幂等/CAS、心跳、小屏条数、时区、开课过滤、过期保留、午夜切换和emergency-only生命周期。接口协议与操作说明见 `../apple/API.md`。连接器规则要求Muse更新现有5分钟任务；服务器说明更新不等于Muse任务已实际变更，需它首次发布真实计划并确认。
+
+
+Apple低token维护：connector不新增模型任务，使用已有事件理解和本地plan/revision缓存。普通轮询只由消费脚本POST `/v1/apple/heartbeat?quiet=true`，成功204无正文；错误仍返回真实401/409。首次/缓存丢失/冲突才读完整state，跨日或事实变更才发布完整计划。接口不会代Muse伪造自动心跳，也不保证模型平台的具体token预算。

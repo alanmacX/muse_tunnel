@@ -49,6 +49,9 @@ with tempfile.TemporaryDirectory() as tmp:
     changed['base_revision']=1;assert post(changed).json()['revision']==2
     assert client.post('/v1/apple/heartbeat',json={'base_revision':1},headers=muse).status_code==409
     assert client.post('/v1/apple/heartbeat',json={'base_revision':2},headers=muse).status_code==200
+    quiet=client.post('/v1/apple/heartbeat?quiet=true',json={'base_revision':2},headers=muse)
+    assert quiet.status_code==204 and quiet.content==b''
+    assert client.post('/v1/apple/heartbeat?quiet=true',json={'base_revision':1},headers=muse).status_code==409
     fixed+=timedelta(minutes=16)
     stale=get().json();assert stale['stale'] and stale['courses'] and stale['live_activities']==[]
     assert client.post('/v1/apple/heartbeat',json={'base_revision':2},headers=muse).status_code==200

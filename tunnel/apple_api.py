@@ -3,7 +3,7 @@ import json,os,secrets
 from datetime import date,datetime,timedelta
 from pathlib import Path
 from typing import Literal
-from fastapi import APIRouter,Depends,HTTPException
+from fastapi import APIRouter,Depends,HTTPException,Query,Response
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel,ConfigDict,Field,model_validator
 from api import CONSUMER,KEY_FILE,LOCAL,authenticate,canonical,connection,digest,now,security,source_availability
@@ -142,7 +142,7 @@ def publish_apple_dashboard(body:Publish):
 
 @router.post('/heartbeat',dependencies=[Depends(authenticate)],operation_id='maintain_apple_dashboard',
     description='After a successful five-minute check, renew the unchanged current plan. Revision must match. Set partial when evidence or processing is incomplete. Never claim successful maintenance merely because the endpoint was called.')
-def maintain_apple_dashboard(body:Heartbeat):
+def maintain_apple_dashboard(body:Heartbeat,quiet:bool=Query(False)):
     with connection() as c:
         c.execute('BEGIN IMMEDIATE');old=stored(c)
         if old is None or body.base_revision!=old['revision']:raise HTTPException(409,'Apple plan missing or changed')
@@ -151,6 +151,7 @@ def maintain_apple_dashboard(body:Heartbeat):
         checked=now()
         c.execute('UPDATE apple_dashboard SET maintained_at=?,maintenance_status=? WHERE singleton=1',
             (checked,body.maintenance_status))
+    if quiet:return Response(status_code=204)
     return {'revision':old['revision'],'changed':False,'maintained_at':checked,'device_push_sent':False}
 
 
