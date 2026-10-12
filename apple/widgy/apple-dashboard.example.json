@@ -1,0 +1,19 @@
+{
+  "synthetic": true,
+  "schema_version": 1,
+  "date": "2026-10-12",
+  "timezone": "Asia/Shanghai",
+  "display_title": "示例 · 今日课程（非真实数据）",
+  "display_course_1": "09:00–10:35  示例课程 A · 示例教室",
+  "display_course_2": "14:00–15:35  示例课程 B · 临时调课",
+  "display_course_3": "",
+  "display_courses_more": "",
+  "display_deadlines_heading": "今日截止 · 示例",
+  "display_deadline_1": "18:00  示例实验报告 · 未完成",
+  "display_deadline_2": "",
+  "display_deadlines_more": "",
+  "display_freshness": "示例数据 · 仅供字段绑定和布局验证",
+  "courses_today": [],
+  "deadlines_today": [],
+  "live_activities": []
+}
