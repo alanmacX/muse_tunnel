@@ -10,6 +10,10 @@ with tempfile.TemporaryDirectory() as tmp:
     import api,apple_api as a,store
     from fastapi.testclient import TestClient
     api.init();client=TestClient(api.app)
+    assert a.compact_location('屏峰校区 · 广B204')=='广B204'
+    assert a.compact_location('屏峰·博易C103')=='博易C103'
+    assert a.compact_location('朝晖校区 · 东教101')=='朝晖校区 · 东教101'
+    assert a.compact_location('屏峰楼B204')=='屏峰楼B204'
     muse={'Authorization':'Bearer '+consumer};watch={'Authorization':'Bearer '+device}
     fixed=RealDatetime.now(api.LOCAL).replace(hour=8,minute=0,second=0,microsecond=0)
     class Clock(RealDatetime):
@@ -43,6 +47,8 @@ with tempfile.TemporaryDirectory() as tmp:
     result=get().json();assert len(result['courses'])==2 and result['remaining_courses_count']==1 and len(result['important_events'])==1
     assert result['display_course_1_time']=='09:00' and result['display_course_1_location']=='Room 1'
     assert len(result['display_widget_footer'])<=12
+    assert result['display_course_1_title']=='Example 1'
+    assert result['display_course_2_title']=='Example 2'
     assert len(get('/v1/apple/live-activities').json()['live_activities'])==1
     assert 'evidence' not in result['courses'][0] and 'content' not in result
     assert get('/v1/apple/watch').json()['courses']==result['courses']
@@ -58,7 +64,7 @@ with tempfile.TemporaryDirectory() as tmp:
     quiet=client.post('/v1/apple/heartbeat?quiet=true',json={'base_revision':2},headers=muse)
     assert quiet.status_code==204 and quiet.content==b''
     assert client.post('/v1/apple/heartbeat?quiet=true',json={'base_revision':1},headers=muse).status_code==409
-    fixed+=timedelta(minutes=16)
+    fixed+=timedelta(minutes=26)
     stale=get().json();assert stale['stale'] and stale['courses'] and stale['live_activities']==[]
     assert client.post('/v1/apple/heartbeat',json={'base_revision':2},headers=muse).status_code==200
     assert not get().json()['stale']
@@ -81,6 +87,7 @@ with tempfile.TemporaryDirectory() as tmp:
     blank={'base_revision':2,'date':fixed.date().isoformat(),'courses_today':[]}
     assert post(blank).status_code==200
     assert get(auth=muse).json()['courses_need_publication'] is False
+    assert get(auth=muse).json()['display_course_1_title']=='上完了' and get(auth=muse).json()['display_course_2_title']==''
     with api.connection() as c:c.execute("DELETE FROM source_state WHERE source='apple' AND key='courses_explicit_revision'")
     assert get(auth=muse).json()['courses_need_publication'] is True
     assert '待 Muse 补齐' in get(auth=muse).json()['display_course_1']

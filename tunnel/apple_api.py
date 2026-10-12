@@ -1,5 +1,5 @@
 """Muse-maintained compact Apple views; independent read-only device credential."""
-import json,os,secrets
+import json,os,re,secrets
 from datetime import date,datetime,timedelta
 from pathlib import Path
 from typing import Literal
@@ -9,7 +9,7 @@ from pydantic import AliasChoices,BaseModel,ConfigDict,Field,model_validator
 from api import CONSUMER,KEY_FILE,LOCAL,authenticate,canonical,connection,digest,now,security,source_availability
 
 APPLE_KEY_FILE=Path(os.environ.get('MUSE_APPLE_KEY_FILE','data/apple.key'))
-STALE_SECONDS=900
+STALE_SECONDS=1500
 router=APIRouter(prefix='/v1/apple')
 
 
@@ -142,7 +142,7 @@ def publish_apple_dashboard(body:Publish):
 
 
 @router.post('/heartbeat',dependencies=[Depends(authenticate)],operation_id='maintain_apple_dashboard',
-    description='After a successful five-minute check, renew the unchanged current plan. Revision must match. Set partial when evidence or processing is incomplete. Never claim successful maintenance merely because the endpoint was called.')
+    description='After a successful ten-minute check, renew the unchanged current plan. Revision must match. Set partial when evidence or processing is incomplete. Never claim successful maintenance merely because the endpoint was called.')
 def maintain_apple_dashboard(body:Heartbeat,quiet:bool=Query(False)):
     with connection() as c:
         c.execute('BEGIN IMMEDIATE');old=stored(c)
@@ -213,16 +213,26 @@ def view():
         'view_updated_at':clock.isoformat(),'live_activity_transport':'data_only_not_APNs'}
 
 
+def compact_location(value):
+    # Omit only the known default campus prefix; never trim a similarly named building.
+    value=re.sub(r'^(?:屏峰校区|屏峰(?=[\s·・/｜|,，:：—-]))\s*[·・/｜|,，:：—-]*\s*','',value).strip()
+    return value or '地点待核实'
+
+
 @router.get('/dashboard',dependencies=[Depends(authenticate_apple)],operation_id='get_apple_dashboard',
     description='Compact read-only smallest-widget view: at most two not-yet-ended courses today (time/location), at most two Muse-selected important events. Ended classes are filtered at request time. Explicit freshness. Apple token cannot access messages or write plans.')
 def get_apple_dashboard():
     result=view()
     result['display_title']='今日剩余课程'
+    for item in result['courses']:item['location']=compact_location(item['location'])
     for n in (1,2):
         courses=result['courses'];important=result['important_events']
         result['display_course_'+str(n)]=(('进行中 ' if courses[n-1]['status']=='in_progress' else courses[n-1]['time']+' ')+courses[n-1]['location']) if len(courses)>=n else (('课程安排待 Muse 补齐' if result['courses_need_publication'] else '今日课程已结束或无课') if n==1 and result['status']=='ready' else '')
         result['display_important_'+str(n)]=important[n-1]['title'] if len(important)>=n else ''
     result['display_date']=datetime.now(LOCAL).strftime('%m.%d')
+    verified_empty=(result['status']=='ready' and not result['courses_need_publication'])
+    result['display_course_1_title']=result['courses'][0]['title'] if result['courses'] else '上完了' if verified_empty else '待补齐' if result['courses_need_publication'] else '待同步'
+    result['display_course_2_title']=result['courses'][1]['title'] if len(result['courses'])>1 else ''
     for n in (1,2):
         courses=result['courses']
         if len(courses)>=n:

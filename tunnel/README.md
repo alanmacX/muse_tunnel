@@ -65,13 +65,15 @@ Muse 学生管家连接器的完整运行规则见 [MUSE_CONNECTOR_PROMPT.md](MU
 
 只读：GET `/v1/apple/dashboard` 和 `/v1/apple/watch`（同样的紧凑视图），GET `/v1/apple/live-activities`（仅活跃emergency）。设备独立Bearer存放`data/apple.key`，0600、至少40字符，原子替换可撤销。设备key不能访问feed/原消息/附件/state或进行任何写入；Muse凭据也可读取以验证输出。当前是数据接口，不发送APNs、不代表设备已经显示。
 
-维护：Muse-only GET `/v1/apple/state`，POST `/v1/apple/dashboard`完整替换，POST `/v1/apple/heartbeat`维护不变内容。乐观base_revision、稳定ID和源event_id/hash检查，拒绝丢失的证据及覆盖新版本。计划只接受上海当日日期、时区时间、最多24条课表输入/2条重要事项/1条emergency；widget/watch只显示当天尚未结束的最近2课（含进行中）（时间/地点）及最多2事，多余课程计数。每次GET按时间过滤，不依赖Muse及时删掉已经结束的课；跨午夜隐藏旧日课程和事项。15分钟无维护显式stale，保留最后当日有效安排，Live Activity过期/partial时不再返回活跃条目。设备仍须检查valid_until/end_at并结束已经显示的卡片。
+维护：Muse-only GET `/v1/apple/state`，POST `/v1/apple/dashboard`完整替换，POST `/v1/apple/heartbeat`维护不变内容。乐观base_revision、稳定ID和源event_id/hash检查，拒绝丢失的证据及覆盖新版本。计划只接受上海当日日期、时区时间、最多24条课表输入/2条重要事项/1条emergency；widget/watch只显示当天尚未结束的最近2课（含进行中）（时间/地点）及最多2事，多余课程计数。每次GET按时间过滤，不依赖Muse及时删掉已经结束的课；跨午夜隐藏旧日课程和事项。25分钟无维护显式stale，保留最后当日有效安排，Live Activity过期/partial时不再返回活跃条目。设备仍须检查valid_until/end_at并结束已经显示的卡片。
 
 所有Widgy文本字段由结构化数据派生：display_title、display_course_1/2、display_important_1/2、display_courses_more、display_freshness。没有课程时，只有ready才显示“今日无待上课程”；未初始化为awaiting_muse，不能误称没有安排。state给Muse提供完整计划，设备视图不暴露evidence/hash及原消息。SQLite备份自然包含apple_dashboard表。
 
-`.venv/bin/python check_apple.py`：验证设备最小权限、撤销、证据、幂等/CAS、心跳、小屏条数、时区、开课过滤、过期保留、午夜切换和emergency-only生命周期。接口协议与操作说明见 `../apple/API.md`。连接器规则要求Muse更新现有5分钟任务；服务器说明更新不等于Muse任务已实际变更，需它首次发布真实计划并确认。
+`.venv/bin/python check_apple.py`：验证设备最小权限、撤销、证据、幂等/CAS、心跳、小屏条数、时区、开课过滤、过期保留、午夜切换和emergency-only生命周期。接口协议与操作说明见 `../apple/API.md`。连接器规则要求Muse更新现有10分钟任务；服务器说明更新不等于Muse任务已实际变更，需它首次发布真实计划并确认。
 
 
 Apple低token维护：connector不新增模型任务，使用已有事件理解和本地plan/revision缓存。普通轮询只由消费脚本POST `/v1/apple/heartbeat?quiet=true`，成功204无正文；错误仍返回真实401/409。首次/缓存丢失/冲突才读完整state，跨日或事实变更才发布完整计划。接口不会代Muse伪造自动心跳，也不保证模型平台的具体token预算。
 
 Apple课程仍由Muse维护，不做服务端课表推导。发布courses_today必填，courses可作输入别名；正在上课保留到end_at。
+
+Widget v3删去MUSE装饰；首课大字名称+地点，下一课普通字体名称，确认没有剩余课时“上完了”。地点省略屏峰校区前缀但保留其他校区；Muse现有轮询改成每10分钟，服务端采集频率不变。

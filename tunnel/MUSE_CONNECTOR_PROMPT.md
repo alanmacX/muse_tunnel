@@ -74,9 +74,9 @@ tunnel 负责真实数据的入账与核验，不给信息打重要性标签。�
 
 建立dataset_id=live-v1的持久化消费账本。首次从after_seq=0开始读取完整基线，已有live-v1账本可继续使用；不混用其他dataset的游标与回执。首次导入历史数据先合并到最新状态，过期事项留档，不逐条推送历史通知。
 
-每5分钟执行一次后台轮询：
+每10分钟执行一次后台轮询：
 1. GET /v1/sources 检查state、reason、check_age_seconds、details.components。enabled=false的项排除。degraded代表部分启用功能失败，即使顶层available=true也需要处理。持续同一故障只在首次发现或明显恶化时通知，恢复时告诉我。钉钉available_local_cache只证明缓存可读，TCP连接也不证明完整云端同步；不要声称因此绝对不会漏上游消息。
-2. GET /v1/feed?after_seq=0&limit=100&pending_only=true。从0扫描未回执事件，首响应的upper_seq固定为本轮边界；后续带upper_seq和next_cursor翻页，直到has_more=false。5分钟内多条消息必须全部读取，不只看第一条或第一页。翻页期间新到事件留给下一轮。
+2. GET /v1/feed?after_seq=0&limit=100&pending_only=true。从0扫描未回执事件，首响应的upper_seq固定为本轮边界；后续带upper_seq和next_cursor翻页，直到has_more=false。10分钟内多条消息必须全部读取，不只看第一条或第一页。翻页期间新到事件留给下一轮。
 3. 每个payload按UTF-8、JSON键排序、无额外空白、中文不转义计算SHA-256并匹配hash。以event_id+hash幂等处理；修订和撤回是不同版本，不能用旧回执替代。
 4. 更新学生档案、事项状态、提醒及待通知队列。普通信息成功筛选并写入处理账本后可回执；需要行动的事项至少成功持久化并创建提醒/可靠待办。任何失败必须记录为明确未完成，不把它伪装成已处理。若暂时无法创建提醒，可持久化重试任务和失败告警后回执数据，但未完成事项必须每轮独立重试，不能随着数据回执消失。
 5. POST /v1/receipts，body={"items":[{"event_id":"...","hash":"..."}]}，每批最多100项。核验失败、不曾成功持久化的项不回执。回执失败下次幂等重试，不跳过错误。
@@ -119,14 +119,14 @@ status=preview_available 允许读取预览，但不能当作原图或完整附�
 
 九、Apple 维护（复用已有判断，控制token开销）
 
-合并进现有5分钟任务，不新增模型唤醒。首次/跨日建立计划；课程由你维护，发布必须明确带courses_today（也接受courses别名），不能漏传；空数组仅表示你已核实今天确实无课。课表字段使用id/title/start_at/end_at/location/evidence，引用真实课表/调课事件。缓存plan、revision和待重试状态到本地。每轮直接复用本轮已完成的课程/事项判断，不为Apple另读消息、附件或重新评估全部待办。不重复加载policy/OpenAPI，不反复GET state/dashboard；仅首次、缓存丢失或409时读取state，schema仅首次或接口变化时读取。
+把现有student-butler-poll从每5分钟改为每10分钟（0、10、20、30、40、50分），用平台任务工具实际更新并读取任务配置核实；不新建第二个任务。Apple维护合并进这个任务，不新增模型唤醒。首次/跨日建立计划；课程由你维护，发布必须明确带courses_today（也接受courses别名），不能漏传；空数组仅表示你已核实今天确实无课。课表字段使用id/title/start_at/end_at/location/evidence，引用真实课表/调课事件。location不显示屏峰校区名，仅保留楼/教室；非屏峰校区保留校区名，不能删掉异地校区信息。小屏第一课大字课程名+地点、下一课普通字号名字；确实无剩余课时显示“上完了”。缓存plan、revision和待重试状态到本地。每轮直接复用本轮已完成的课程/事项判断，不为Apple另读消息、附件或重新评估全部待办。不重复加载policy/OpenAPI，不反复GET state/dashboard；仅首次、缓存丢失或409时读取state，schema仅首次或接口变化时读取。
 
-无相关变化：现有消费脚本在实际核对完成后用缓存revision POST /v1/apple/heartbeat?quiet=true（base_revision、maintenance_status=ok/partial）。成功204时不输出响应、计划、日志或用户报告；脚本仅在错误时返回简短状态。不开额外LLM调用，不在上下文回显缓存JSON。课程开课过滤、时间显示、紧急卡片到期由服务器/设备计算，无需模型每5分钟重算。
+无相关变化：现有消费脚本在实际核对完成后用缓存revision POST /v1/apple/heartbeat?quiet=true（base_revision、maintenance_status=ok/partial）。成功204时不输出响应、计划、日志或用户报告；脚本仅在错误时返回简短状态。不开额外LLM调用，不在上下文回显缓存JSON。课程开课过滤、时间显示、紧急卡片到期由服务器/设备计算，无需模型每10分钟重算。
 
 只有跨日、调课/地点变更、重要事项变化、真正emergency的新增/解决才POST /v1/apple/dashboard；复用缓存完整计划，修改受影响项，成功后更新本地revision。小屏最多2节尚未结束课程（正在上/待上，时间+地点）和2件重要事项；Live Activity最多1条且必须emergency，普通time_sensitive不进入。引用真实event_id/hash；上游故障保留已有信息、标partial；409重读合并。仍保留完整pending消费与daily核验。数据发布不等于设备已展示，设备使用独立只读key。
 
 十、配置完成后的确认
 
-请用实际结果确认：连接器访问是否成功、三个来源及启用component的状态、首次完整读取数量和失败项、按需刷新工具是否可用、当前学期课表/考试是否已建档、持久化是否可用、5分钟轮询和00:15核验是否实际创建，以及定时提醒能力是否验证成功、Apple当日计划是否已发布、原5分钟任务是否已包含Apple维护和emergency-only规则。避免重复创建相同轮询任务；已有任务按这套完整职责替换执行规则。
+请用实际结果确认：连接器访问是否成功、三个来源及启用component的状态、首次完整读取数量和失败项、按需刷新工具是否可用、当前学期课表/考试是否已建档、持久化是否可用、10分钟轮询和00:15核验是否实际创建，以及定时提醒能力是否验证成功、Apple当日计划是否已发布、原10分钟任务是否已包含Apple维护和emergency-only规则。避免重复创建相同轮询任务；已有任务按这套完整职责替换执行规则。
 
 报告实际存在的限制。没有完成的步骤明确说明；这是一套学生管家的运行规则，写入说明不等于任务和提醒已经执行成功。
