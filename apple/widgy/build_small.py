@@ -14,12 +14,12 @@ def frame(x,y,w,h):
 def widget(theme):
     size=BASE['6']  # User confirmed this actual exported document is Small.
     root=copy.deepcopy(BASE)
-    root['3']='Muse · 今日剩余安排 v3 · '+('深色' if theme=='dark' else '浅色')
+    root['3']='Muse · 今日剩余安排 v4 · '+('深色' if theme=='dark' else '浅色')
     root['5']='Muse Tunnel';root['6']=size
     root['36']=[]  # Variables, not visual layers. Keep empty; no invalid names.
     root['1']=[]
     foreground='uicol_white-100' if theme=='dark' else 'uicol_black-100'
-    muted='uicol_gray-100';accent='uicol_systemOrange-100'
+    muted=foreground;accent='uicol_systemOrange-100'
     def layer(name,props):
         props['d0']=len(root['1'])
         root['1'].append(props)

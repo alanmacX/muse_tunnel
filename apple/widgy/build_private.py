@@ -17,7 +17,7 @@ for theme in ('dark','light'):
             assert item['18']=='https://hajiqu.xyz/v1/apple/dashboard'
             item['21']={'Authorization':'Bearer '+key}
             urls.add(item['18'])
-    target=PRIVATE/('muse-small-'+theme+'-v3.json')
+    target=PRIVATE/('muse-small-'+theme+'-v4.json')
     fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
     with os.fdopen(fd,'w') as f:f.write(json.dumps(value,ensure_ascii=False,indent=2)+'\n')
     target.chmod(0o600)

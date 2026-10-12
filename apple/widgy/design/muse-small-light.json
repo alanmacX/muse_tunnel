@@ -1,7 +1,7 @@
 {
   "l2": "",
   "m2": "",
-  "3": "Muse · 今日剩余安排 v3 · 浅色",
+  "3": "Muse · 今日剩余安排 v4 · 浅色",
   "q2": "",
   "36": [],
   "a2": 0,
@@ -100,7 +100,7 @@
     {
       "z": "1",
       "1": "System Medium",
-      "f": "uicol_gray-100",
+      "f": "uicol_black-100",
       "b": {
         "b": 0,
         "a": [
@@ -262,7 +262,7 @@
     {
       "z": "1",
       "1": "System Medium",
-      "f": "uicol_gray-100",
+      "f": "uicol_black-100",
       "b": {
         "b": 0,
         "a": [
@@ -492,7 +492,7 @@
     {
       "z": "1",
       "1": "System Medium",
-      "f": "uicol_gray-100",
+      "f": "uicol_black-100",
       "b": {
         "b": 0,
         "a": [

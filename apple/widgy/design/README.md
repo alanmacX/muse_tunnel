@@ -13,3 +13,5 @@ v3布局：删去MUSE装饰与日期；第一课程名大字、下方地点；�
 之前误写变量区的十行draft已删除。Watch/Live类型未验证，不能用手机候选冒充其他类型。
 
 内置只读key的v3文件在tunnel/data/widgy/muse-small-dark-v3.json及light-v3.json，0600且Git忽略。Muse任务频率改为每10分钟需用户代发指令并由Muse实际确认，服务器不直接操控Muse。
+
+v4：地点与维护状态不再使用uicol_gray，改用与实机已显示的课程名一致的黑/白色。接口已确认地点非空、字段绑定正确；样式修正仍需实机确认。内置key文件版本号v4。
