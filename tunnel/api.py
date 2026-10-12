@@ -408,3 +408,9 @@ app.include_router(agent_tools_router)
 # Apple devices use an independent, read-only display credential.
 from apple_api import router as apple_router
 app.include_router(apple_router)
+
+
+@app.get('/assets/widget/chicken-v1.png',include_in_schema=False)
+def widget_chicken_asset():
+    # A fixed, non-private decoration only; no arbitrary file/path access.
+    return FileResponse(Path(__file__).parent/'assets'/'widget-chicken-v1.png',media_type='image/png')

@@ -7,7 +7,7 @@ PRIVATE.mkdir(mode=0o700,parents=True,exist_ok=True)
 PRIVATE.chmod(0o700)
 key=(ROOT/'tunnel'/'data'/'apple.key').read_text().strip()
 if len(key)<40:raise RuntimeError('Apple read-only credential missing')
-for theme in ('dark','light'):
+for theme in ('auto','dark','light'):
     source=ROOT/'apple'/'widgy'/'design'/('muse-small-'+theme+'.json')
     value=json.loads(source.read_text())
     urls=set()
@@ -17,7 +17,7 @@ for theme in ('dark','light'):
             assert item['18']=='https://hajiqu.xyz/v1/apple/dashboard'
             item['21']={'Authorization':'Bearer '+key}
             urls.add(item['18'])
-    target=PRIVATE/('muse-small-'+theme+'-v4.json')
+    target=PRIVATE/('muse-small-'+theme+'-v5.json')
     fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
     with os.fdopen(fd,'w') as f:f.write(json.dumps(value,ensure_ascii=False,indent=2)+'\n')
     target.chmod(0o600)

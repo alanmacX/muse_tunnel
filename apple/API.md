@@ -59,3 +59,5 @@ Live Activity只允许emergency：已核实、明确影响本人、现在必须�
 小号两列设计提供派生字段：display_date、display_course_1_time/location、display_course_2_time/location、display_widget_footer。维护接口无变化；时间槽在进行中时为“进行中”，地点槽保留完整地点；空计划未确认为“待补齐”，非ready空视图为“待同步”。footer采用短文本，但原stale/valid_until仍用于客户端缓存过期校验。
 
 Widget v3：无MUSE装饰标题；display_course_1_title为首课大字名称，display_course_1_location为地点，display_course_2_title为下一课名或空字符串。确认无剩余课且计划有效时主标题是“上完了”；缺计划/过期不冒充已结束。默认屏峰校区前缀省略，异地校区保留。Muse任务每10分钟维护，过期阈值相应为25分钟。
+
+Widget v5的health_hint给出附件缺失/来源异常的短原因；没有修改课程事实或源站状态。底部display_widget_footer具体表达这项原因，而不再一律“待核实”。固定公开/assets/widget/chicken-v1.png仅提供非私密装饰图片，Apple数据仍需只读凭据。

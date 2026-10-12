@@ -2,6 +2,7 @@
 import copy,os,secrets,tempfile
 from datetime import datetime as RealDatetime,timedelta
 from pathlib import Path
+from unittest.mock import patch
 with tempfile.TemporaryDirectory() as tmp:
     root=Path(tmp);consumer=secrets.token_urlsafe(48);device=secrets.token_urlsafe(48)
     for name,value in [('key',consumer),('apple.key',device)]:
@@ -47,6 +48,15 @@ with tempfile.TemporaryDirectory() as tmp:
     result=get().json();assert len(result['courses'])==2 and result['remaining_courses_count']==1 and len(result['important_events'])==1
     assert result['display_course_1_time']=='09:00' and result['display_course_1_location']=='Room 1'
     assert len(result['display_widget_footer'])<=12
+    health={name:{'available':True,'state':'available','reason':'read_ok','details':{}} for name in ('dingtalk','chaoxing','zjut')}
+    health['chaoxing'].update(state='degraded',reason='partial_collection',details={'components':{
+        'media':{'available':False},'notices':{'available':True},'coursework':{'available':True},'im':{'available':False,'enabled':False}}})
+    with patch.object(a,'source_availability',return_value=health):
+        assert get().json()['display_widget_footer'].startswith('附件缺失')
+    health['chaoxing']['details']['components']['notices']['available']=False
+    with patch.object(a,'source_availability',return_value=health):
+        assert get().json()['display_widget_footer'].startswith('来源异常')
+
     assert result['display_course_1_title']=='Example 1'
     assert result['display_course_2_title']=='Example 2'
     assert len(get('/v1/apple/live-activities').json()['live_activities'])==1

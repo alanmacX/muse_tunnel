@@ -200,6 +200,10 @@ def view():
             emergencies.append({k:item[k] for k in ('id','title','severity','action','start_at','end_at')})
     issues=[{'source':name,'state':s['state'],'reason':s['reason']} for name,s in sources.items()
             if not s['available'] or s['state'] in ('degraded','stale')]
+    cx=sources.get('chaoxing',{}).get('details',{}).get('components',{})
+    media_only=(len(issues)==1 and issues[0]['source']=='chaoxing' and cx.get('media',{}).get('available') is False
+        and all(v.get('available') for k,v in cx.items() if k!='media' and v.get('enabled',True)))
+    health_hint='附件缺失' if media_only else '来源异常' if issues else ''
     freshness=('等待 Muse 维护' if status=='awaiting_muse' else '等待今日安排' if status=='awaiting_today_plan'
         else '信息已过期' if status=='stale' else '部分信息待核实' if status=='partial' else '已核对')
     if issues:freshness+=' · 来源异常'
@@ -209,7 +213,7 @@ def view():
         'valid_until':(datetime.fromisoformat(old['maintained_at'])+timedelta(seconds=STALE_SECONDS)).isoformat() if old else None,
         'status':status,'stale':stale,'courses':courses[:2],
         'courses_need_publication':courses_unconfirmed,'remaining_courses_count':max(0,len(courses)-2),'important_events':important[:2],
-        'live_activities':emergencies,'source_issues':issues,'display_freshness':freshness,
+        'live_activities':emergencies,'source_issues':issues,'health_hint':health_hint,'display_freshness':freshness,
         'view_updated_at':clock.isoformat(),'live_activity_transport':'data_only_not_APNs'}
 
 
@@ -242,7 +246,7 @@ def get_apple_dashboard():
         else:
             result['display_course_'+str(n)+'_time']=('待补齐' if result['courses_need_publication'] else '无剩余课' if result['status']=='ready' else '待同步') if n==1 else ''
             result['display_course_'+str(n)+'_location']=''
-    short='过期' if result['stale'] else '待补齐' if result['courses_need_publication'] else '待核实' if result['status']!='ready' or result['source_issues'] else '核对'
+    short='过期' if result['stale'] else '待补齐' if result['courses_need_publication'] else result['health_hint'] if result['health_hint'] else '部分未确认' if result['status']=='partial' else '待同步' if result['status']!='ready' else '更新'
     if result['maintained_at']:short+=' '+datetime.fromisoformat(result['maintained_at']).astimezone(LOCAL).strftime('%H:%M')
     result['display_widget_footer']=short
     result['display_courses_more']='另有 '+str(result['remaining_courses_count'])+' 节' if result['remaining_courses_count'] else ''

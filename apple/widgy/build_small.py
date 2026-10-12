@@ -14,11 +14,11 @@ def frame(x,y,w,h):
 def widget(theme):
     size=BASE['6']  # User confirmed this actual exported document is Small.
     root=copy.deepcopy(BASE)
-    root['3']='Muse · 今日剩余安排 v4 · '+('深色' if theme=='dark' else '浅色')
+    root['3']='Muse · 今日剩余安排 v5 · '+('跟随系统' if theme=='auto' else '深色' if theme=='dark' else '浅色')
     root['5']='Muse Tunnel';root['6']=size
     root['36']=[]  # Variables, not visual layers. Keep empty; no invalid names.
     root['1']=[]
-    foreground='uicol_white-100' if theme=='dark' else 'uicol_black-100'
+    foreground='uicol_label-100' if theme=='auto' else 'uicol_white-100' if theme=='dark' else 'uicol_black-100'
     muted=foreground;accent='uicol_systemOrange-100'
     def layer(name,props):
         props['d0']=len(root['1'])
@@ -38,16 +38,17 @@ def widget(theme):
     text('Primary course',130,90,1340,350,20,field='display_course_1_title')
     text('Primary location',130,445,1340,170,11,field='display_course_1_location',color=muted)
     text('Next course',130,650,1340,180,13,field='display_course_2_title')
-    text('Separator',130,825,1340,70,6,literal='────────────────────────',color=muted)
     for n,y in ((1,950),(2,1150)):
         text('Important '+str(n),130,y,1340,150,11,field='display_important_'+str(n))
     text('Freshness',130,1410,1340,100,8,field='display_widget_footer',color=muted)
+    # The decoration stays behind every text layer, above the background.
+    layer('Chicken',{'z':'5','1':'Web URL','2':'https://hajiqu.xyz/assets/widget/chicken-v1.png',**frame(1190,1230,289,330)})
     # Widgy's visual stack lists foreground layers first, background last.
-    layer('Background',{'z':'2','g':'uicol_black-100' if theme=='dark' else 'uicol_white-100',**frame(0,0,1600,1600)})
+    layer('Background',{'z':'2','g':'uicol_systemBackground-100' if theme=='auto' else 'uicol_black-100' if theme=='dark' else 'uicol_white-100',**frame(0,0,1600,1600)})
     return root
 
 if __name__=='__main__':
-    for theme in ('dark','light'):
+    for theme in ('auto','dark','light'):
         data=widget(theme)
         assert data['6']==BASE['6'] and data['0']==BASE['0'] and data['a2']==BASE['a2']
         assert len(data['1'])==8 and data['36']==[]
@@ -60,7 +61,7 @@ if __name__=='__main__':
                     assert set(endpoint['21'])=={'__widgy_auth_header_name','__widgy_auth_prefix'}
         (OUT/('muse-small-'+theme+'.json')).write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
     # Retire only the generated size guesses, not any user export.
-    for theme in ('dark','light'):
+    for theme in ('auto','dark','light'):
         for size in (0,1,2):
             (OUT/('muse-'+theme+'-size-'+str(size)+'.json')).unlink(missing_ok=True)
-    print('Generated light/dark Small templates; original document size preserved; endpoint bindings checked; no credentials embedded.')
+    print('Generated adaptive/light/dark Small templates; original document size preserved; endpoint bindings checked; no credentials embedded.')

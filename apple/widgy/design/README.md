@@ -15,3 +15,8 @@ v3布局：删去MUSE装饰与日期；第一课程名大字、下方地点；�
 内置只读key的v3文件在tunnel/data/widgy/muse-small-dark-v3.json及light-v3.json，0600且Git忽略。Muse任务频率改为每10分钟需用户代发指令并由Muse实际确认，服务器不直接操控Muse。
 
 v4：地点与维护状态不再使用uicol_gray，改用与实机已显示的课程名一致的黑/白色。接口已确认地点非空、字段绑定正确；样式修正仍需实机确认。内置key文件版本号v4。
+
+
+v5：首选跟随系统版本muse-small-auto-v5.json，前景为uicol_label、背景为uicol_systemBackground（Widgy/UIKit语义动态色；导入后的原生切换仍需确认），固定黑/白版本作为备用。没有分割线。小鸡由用户提供图经imagegen透明抠图，保存在tunnel/assets/widget-chicken-v1.png；固定公开HTTPS图片地址仅提供非私密装饰，图片位于右下角、文字层之后、背景层之前，尺寸约31×36pt。文本保持最上层，没有新增Muse字段或模型任务。
+
+底部“待核实”过去是过于笼统的维护/来源健康说明。现在对仅学习通media失败而通知/作业可用的情况显示“附件缺失”，其他来源失败显示“来源异常”，维护partial但无已知来源错误显示“部分未确认”；过期与缺计划仍各自提示。状态不代表课程本身一定未核实。带key文件仍只在tunnel/data/widgy，绝不进Git。图片是透明PNG，不依赖设备本地照片权限。
