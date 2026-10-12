@@ -6,8 +6,8 @@
 
 使用Apple专用只读key，在Widgy鉴权输入单独配置Authorization/Bearer。JSON模板不含真实key，也没有猜测Vault的存储格式。
 
-导入：muse-small-dark.json（深色）或muse-small-light.json（浅色）。用户已确认原始user-sample.json就是小号，模板原样保留其文档类型/尺寸配置0=29、6=2、a2=0，不需要再次导出或猜测枚举。图层和实际JSON Endpoint绑定已静态验证；实际字体/背景/字距与鉴权读取仍需导入后在Widgy验证，设计预览不能冒充实机截图。
+导入：muse-small-dark.json（深色）或muse-small-light.json（浅色）。用户已确认原始user-sample.json就是小号，模板原样保留其文档类型/尺寸配置0=29、6=2、a2=0，不需要再次导出或猜测枚举。修正后图层存放在1数组，36仅为变量列表且为空；12个图层，背景置后。图层和实际JSON Endpoint绑定已静态验证；实际字体/背景/字距与鉴权读取仍需导入后在Widgy验证，设计预览不能冒充实机截图。
 
 接口新增display_date、display_course_1_time/location、display_course_2_time/location、display_widget_footer；均由已发布的结构化数据确定性派生，没有新增Muse维护字段或模型任务。字段正好适配左右时间/地点列。display_courses_more由服务器计算。
 
-不要使用之前的十行muse-today-dashboard.draft.json作为这个设计的最终模板。Watch/Live类型未验证，不能用手机候选冒充其他类型。
+之前误写变量区的十行draft已删除。Watch/Live类型未验证，不能用手机候选冒充其他类型。
