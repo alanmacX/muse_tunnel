@@ -10,7 +10,7 @@ Authorization: Bearer <Apple-only key>。不要使用Muse完整key。
 - GET /v1/apple/watch：同一小屏协议。
 - GET /v1/apple/live-activities：只返回仍有效的emergency卡片，最多1条。
 
-widget/watch返回：date、timezone、revision、maintained_at、valid_until、status、stale、courses（最多2条）、remaining_courses_count、important_events（最多2条）、source_issues、live_activities（最多1条）及display_*字符串。courses只含今天未开始的课，按实际开课时间排序；时间/地点为首要显示字段。每次GET自动过滤已开始的课程，无需等待Muse下一轮。
+widget/watch返回：date、timezone、revision、maintained_at、valid_until、status、stale、courses（最多2条）、remaining_courses_count、important_events（最多2条）、source_issues、live_activities（最多1条）及display_*字符串。courses只含今天尚未结束的课（含正在上的课），按实际开课时间排序；时间/地点为首要显示字段。每次GET自动过滤已结束的课程，无需等待Muse下一轮。
 
 Widgy绑定：
 
@@ -32,7 +32,7 @@ Widgy绑定：
 使用已有Muse Vault Bearer。GET /v1/apple/state取得revision、plan。POST /v1/apple/dashboard需要：
 
 - base_revision、date（必须Asia/Shanghai当天）、maintenance_status=ok/partial。
-- courses_today最多24条，id/title/start_at/end_at/location/evidence。
+- courses_today必填（接受courses别名），最多24条，id/title/start_at/end_at/location/evidence。
 - important_events最多2条，id/title/action/reason/due_at（可null）/status/evidence。
 - live_activities最多1条，id/title/severity=emergency/action/reason/start_at/end_at/status/evidence。
 - evidence是非空 `[{event_id:真实来源事件ID,hash:实际事件hash}]`。详细输入约束见鉴权OpenAPI。
@@ -53,3 +53,5 @@ Live Activity只允许emergency：已核实、明确影响本人、现在必须�
 首次读取state/schema后缓存完整plan与revision到Muse工作区。已有5分钟消费脚本在完成原本核对之后维护，不新增模型任务，不在每轮工具输出中带上课程/事项数组。不变时 POST /v1/apple/heartbeat?quiet=true；成功204无正文，脚本不回显日志，只在失败时输出简短错误。同内容不增长revision，409不被quiet掩盖。跨日/事实变化才发布，复用已处理的信息，不为Apple再次拉取消息或重新阅读文件。课程开始与Live Activity过期由时间字段确定。
 
 这控制额外模型工作，不承诺精确token上限；平台任务prompt长度、模型缓存及工具日志是否进入上下文仍由Muse执行环境决定。须确认其消费脚本实际接入、能持久化缓存且无变化时不回显全量计划；服务器policy更新不等于Muse脚本自动改好。
+
+课程由Muse维护，服务器不从正方自动推导。必须显式发布完整课程数组；缺失返回422，不默认为无课。进行中的课程保留到end_at，状态in_progress；未来课程为upcoming。

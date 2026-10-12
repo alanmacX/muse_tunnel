@@ -33,6 +33,10 @@ with tempfile.TemporaryDirectory() as tmp:
         'important_events':[{'id':'task','title':'Important task','action':'Check details','reason':'Requires action today','due_at':stamp(4),'evidence':evidence}],
         'live_activities':[{'id':'emergency','title':'Immediate action','action':'Check verified notice','reason':'Immediate personal impact','severity':'emergency','start_at':stamp(-.1),'end_at':stamp(1),'evidence':evidence}]}
     assert client.post('/v1/apple/dashboard',json=body,headers=watch).status_code==401
+    missing=copy.deepcopy(body);missing.pop('courses_today')
+    assert post(missing).status_code==422
+    alias=copy.deepcopy(body);alias['courses']=alias.pop('courses_today')
+    assert a.Publish.model_validate(alias).courses_today[0].id=='course-1'
     created=post(body);assert created.status_code==200,created.text
     assert created.json()['revision']==1 and created.json()['changed']
     assert post(body).json()['changed'] is False
@@ -56,8 +60,10 @@ with tempfile.TemporaryDirectory() as tmp:
     stale=get().json();assert stale['stale'] and stale['courses'] and stale['live_activities']==[]
     assert client.post('/v1/apple/heartbeat',json={'base_revision':2},headers=muse).status_code==200
     assert not get().json()['stale']
-    # Merely passing the start time filters courses without Muse needing another write.
+    # An ongoing course stays visible until its end, without another Muse write.
     fixed+=timedelta(minutes=44)
+    current=get().json();assert current['courses'][0]['id']=='course-1' and current['courses'][0]['status']=='in_progress'
+    fixed+=timedelta(minutes=30)
     current=get().json();assert current['courses'][0]['id']=='course-2' and current['remaining_courses_count']==0
     assert get('/v1/apple/live-activities').json()['live_activities']==[]
     assert client.post('/v1/apple/heartbeat',json={'base_revision':2,'maintenance_status':'partial'},headers=muse).status_code==200
@@ -69,5 +75,13 @@ with tempfile.TemporaryDirectory() as tmp:
     key=root/'apple.key';key.write_text(secrets.token_urlsafe(48))
     assert get().status_code==401
     assert get(auth=muse).status_code==200
+    blank={'base_revision':2,'date':fixed.date().isoformat(),'courses_today':[]}
+    assert post(blank).status_code==200
+    assert get(auth=muse).json()['courses_need_publication'] is False
+    with api.connection() as c:c.execute("DELETE FROM source_state WHERE source='apple' AND key='courses_explicit_revision'")
+    assert get(auth=muse).json()['courses_need_publication'] is True
+    assert '待 Muse 补齐' in get(auth=muse).json()['display_course_1']
+    assert post(blank).status_code==200
+    assert get(auth=muse).json()['courses_need_publication'] is False
     assert client.get('/v1/status',headers=muse).json()['acknowledged']==0
     print('PASS: Apple read-only scope/revocation, evidence/hash validation, compact counts, idempotent publish/CAS, heartbeat, started-class filtering, stale preservation, emergency-only expiry, midnight rollover and no implicit receipts')

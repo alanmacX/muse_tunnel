@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter,Depends,HTTPException,Query,Response
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel,ConfigDict,Field,model_validator
+from pydantic import AliasChoices,BaseModel,ConfigDict,Field,model_validator
 from api import CONSUMER,KEY_FILE,LOCAL,authenticate,canonical,connection,digest,now,security,source_availability
 
 APPLE_KEY_FILE=Path(os.environ.get('MUSE_APPLE_KEY_FILE','data/apple.key'))
@@ -85,7 +85,7 @@ class Emergency(Referenced):
 class Publish(Strict):
     base_revision:int=Field(ge=0)
     date:date
-    courses_today:list[Course]=Field(default_factory=list,max_length=24)
+    courses_today:list[Course]=Field(max_length=24,validation_alias=AliasChoices('courses_today','courses'))
     # Muse ranks these by actual importance; backend never invents priority labels.
     important_events:list[Important]=Field(default_factory=list,max_length=2)
     live_activities:list[Emergency]=Field(default_factory=list,max_length=1)
@@ -137,6 +137,7 @@ def publish_apple_dashboard(body:Publish):
         checked=now()
         c.execute('INSERT OR REPLACE INTO apple_dashboard VALUES (1,?,?,?,?,?)',
             (revision,canonical(content),fingerprint,checked,body.maintenance_status))
+        c.execute('INSERT OR REPLACE INTO source_state VALUES (?,?,?)',('apple','courses_explicit_revision',str(revision)))
     return {'revision':revision,'changed':not unchanged,'maintained_at':checked,'device_push_sent':False}
 
 
@@ -169,18 +170,22 @@ def view():
     clock=datetime.now(LOCAL)
     with connection() as c:
         old=stored(c);sources=source_availability(c)
+        confirmed=c.execute("SELECT value FROM source_state WHERE source='apple' AND key='courses_explicit_revision'").fetchone()
     today=clock.date().isoformat()
     plan=json.loads(old['content']) if old else {}
     age=(clock-datetime.fromisoformat(old['maintained_at'])).total_seconds() if old else None
     stale=age is None or age>STALE_SECONDS
     same_day=plan.get('date')==today
+    courses_unconfirmed=bool(old and same_day and not plan.get('courses_today') and (not confirmed or confirmed[0]!=str(old['revision'])))
     status='awaiting_muse' if not old else 'awaiting_today_plan' if not same_day else 'stale' if stale else 'partial' if old['maintenance_status']=='partial' else 'ready'
     courses=[]
     for item in plan.get('courses_today',[]) if same_day else []:
         start=datetime.fromisoformat(item['start_at']).astimezone(LOCAL)
-        if start>clock:
+        end=datetime.fromisoformat(item['end_at']).astimezone(LOCAL)
+        if end>clock:
             courses.append({'id':item['id'],'title':item['title'],'start_at':item['start_at'],
-                'end_at':item['end_at'],'time':start.strftime('%H:%M'),'location':item['location']})
+                'end_at':item['end_at'],'time':start.strftime('%H:%M'),'location':item['location'],
+                'status':'in_progress' if start<=clock else 'upcoming'})
     # Sort by the actual instant, not ISO strings with potentially different offsets.
     courses.sort(key=lambda x:datetime.fromisoformat(x['start_at']))
     important=[]
@@ -203,19 +208,19 @@ def view():
         'maintained_at':old['maintained_at'] if old else None,
         'valid_until':(datetime.fromisoformat(old['maintained_at'])+timedelta(seconds=STALE_SECONDS)).isoformat() if old else None,
         'status':status,'stale':stale,'courses':courses[:2],
-        'remaining_courses_count':max(0,len(courses)-2),'important_events':important[:2],
+        'courses_need_publication':courses_unconfirmed,'remaining_courses_count':max(0,len(courses)-2),'important_events':important[:2],
         'live_activities':emergencies,'source_issues':issues,'display_freshness':freshness,
         'view_updated_at':clock.isoformat(),'live_activity_transport':'data_only_not_APNs'}
 
 
 @router.get('/dashboard',dependencies=[Depends(authenticate_apple)],operation_id='get_apple_dashboard',
-    description='Compact read-only smallest-widget view: at most two not-yet-started courses today (time/location), at most two Muse-selected important events. Started classes are filtered at request time. Explicit freshness. Apple token cannot access messages or write plans.')
+    description='Compact read-only smallest-widget view: at most two not-yet-ended courses today (time/location), at most two Muse-selected important events. Ended classes are filtered at request time. Explicit freshness. Apple token cannot access messages or write plans.')
 def get_apple_dashboard():
     result=view()
-    result['display_title']='今日待上课程'
+    result['display_title']='今日剩余课程'
     for n in (1,2):
         courses=result['courses'];important=result['important_events']
-        result['display_course_'+str(n)]=(courses[n-1]['time']+' '+courses[n-1]['location']) if len(courses)>=n else ('今日无待上课程' if n==1 and result['status']=='ready' else '')
+        result['display_course_'+str(n)]=(('进行中 ' if courses[n-1]['status']=='in_progress' else courses[n-1]['time']+' ')+courses[n-1]['location']) if len(courses)>=n else (('课程安排待 Muse 补齐' if result['courses_need_publication'] else '今日课程已结束或无课') if n==1 and result['status']=='ready' else '')
         result['display_important_'+str(n)]=important[n-1]['title'] if len(important)>=n else ''
     result['display_courses_more']='另有 '+str(result['remaining_courses_count'])+' 节' if result['remaining_courses_count'] else ''
     return result

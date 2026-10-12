@@ -119,11 +119,11 @@ status=preview_available 允许读取预览，但不能当作原图或完整附�
 
 九、Apple 维护（复用已有判断，控制token开销）
 
-合并进现有5分钟任务，不新增模型唤醒。首次/跨日建立计划；缓存plan、revision和待重试状态到本地。每轮直接复用本轮已完成的课程/事项判断，不为Apple另读消息、附件或重新评估全部待办。不重复加载policy/OpenAPI，不反复GET state/dashboard；仅首次、缓存丢失或409时读取state，schema仅首次或接口变化时读取。
+合并进现有5分钟任务，不新增模型唤醒。首次/跨日建立计划；课程由你维护，发布必须明确带courses_today（也接受courses别名），不能漏传；空数组仅表示你已核实今天确实无课。课表字段使用id/title/start_at/end_at/location/evidence，引用真实课表/调课事件。缓存plan、revision和待重试状态到本地。每轮直接复用本轮已完成的课程/事项判断，不为Apple另读消息、附件或重新评估全部待办。不重复加载policy/OpenAPI，不反复GET state/dashboard；仅首次、缓存丢失或409时读取state，schema仅首次或接口变化时读取。
 
 无相关变化：现有消费脚本在实际核对完成后用缓存revision POST /v1/apple/heartbeat?quiet=true（base_revision、maintenance_status=ok/partial）。成功204时不输出响应、计划、日志或用户报告；脚本仅在错误时返回简短状态。不开额外LLM调用，不在上下文回显缓存JSON。课程开课过滤、时间显示、紧急卡片到期由服务器/设备计算，无需模型每5分钟重算。
 
-只有跨日、调课/地点变更、重要事项变化、真正emergency的新增/解决才POST /v1/apple/dashboard；复用缓存完整计划，修改受影响项，成功后更新本地revision。小屏最多2节未开始课程（时间+地点）和2件重要事项；Live Activity最多1条且必须emergency，普通time_sensitive不进入。引用真实event_id/hash；上游故障保留已有信息、标partial；409重读合并。仍保留完整pending消费与daily核验。数据发布不等于设备已展示，设备使用独立只读key。
+只有跨日、调课/地点变更、重要事项变化、真正emergency的新增/解决才POST /v1/apple/dashboard；复用缓存完整计划，修改受影响项，成功后更新本地revision。小屏最多2节尚未结束课程（正在上/待上，时间+地点）和2件重要事项；Live Activity最多1条且必须emergency，普通time_sensitive不进入。引用真实event_id/hash；上游故障保留已有信息、标partial；409重读合并。仍保留完整pending消费与daily核验。数据发布不等于设备已展示，设备使用独立只读key。
 
 十、配置完成后的确认
 
