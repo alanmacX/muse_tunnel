@@ -1,4 +1,4 @@
-"""Generate current-export-derived candidates. Native Widgy import is unverified."""
+"""Generate small-widget templates using the user-confirmed small export."""
 import copy,json,uuid
 from pathlib import Path
 P=Path(__file__).parent
@@ -11,9 +11,10 @@ def frame(x,y,w,h):
     return {'b':value(x),'c':value(y),'d':value(w),'e':value(h)}
 
 
-def widget(theme,size):
+def widget(theme):
+    size=BASE['6']  # User confirmed this actual exported document is Small.
     root=copy.deepcopy(BASE)
-    root['3']='Muse · 今日剩余安排 · '+theme+' · size '+str(size)
+    root['3']='Muse · 今日剩余安排 · '+('深色' if theme=='dark' else '浅色')
     root['5']='Muse Tunnel';root['6']=size;root['36']=[]
     foreground='uicol_white-100' if theme=='dark' else 'uicol_black-100'
     muted='uicol_gray-100';accent='uicol_systemOrange-100'
@@ -21,8 +22,8 @@ def widget(theme,size):
         root['36'].append({'0':str(uuid.uuid5(uuid.NAMESPACE_URL,'muse-small:'+theme+':'+name)).upper(),
             '1':name,'2':len(root['36']),'3':props})
     # Shape/text style names are established in older public exports; their current
-    # v29 behavior still needs native confirmation. Sizes 0/1/2 are candidates,
-    # not a claimed documented size enumeration.
+    # v29 behavior still needs native confirmation. Document type/size are
+    # copied from the user's confirmed small export, without guessing enums.
     layer('Background',{'z':'2','g':'uicol_black-100' if theme=='dark' else 'uicol_white-100',**frame(0,0,1600,1600)})
     def text(name,x,y,w,h,size,field=None,literal='',color=None):
         props={'z':'1','1':'System Medium','f':color or foreground,**frame(x,y,w,h),
@@ -47,14 +48,18 @@ def widget(theme,size):
 
 if __name__=='__main__':
     for theme in ('dark','light'):
+        data=widget(theme)
+        assert data['6']==BASE['6'] and data['0']==BASE['0'] and data['a2']==BASE['a2']
+        assert len({x['0'] for x in data['36']})==len(data['36'])
+        for l in data['36']:
+            for endpoint in l['3'].get('66',[]):
+                if endpoint.get('5')=='JSON Endpoint':
+                    assert endpoint['18']=='https://hajiqu.xyz/v1/apple/dashboard'
+                    assert len(endpoint['23'])==1
+                    assert set(endpoint['21'])=={'__widgy_auth_header_name','__widgy_auth_prefix'}
+        (OUT/('muse-small-'+theme+'.json')).write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
+    # Retire only the generated size guesses, not any user export.
+    for theme in ('dark','light'):
         for size in (0,1,2):
-            data=widget(theme,size)
-            assert len({x['0'] for x in data['36']})==len(data['36'])
-            for l in data['36']:
-                for endpoint in l['3'].get('66',[]):
-                    if endpoint.get('5')=='JSON Endpoint':
-                        assert endpoint['18']=='https://hajiqu.xyz/v1/apple/dashboard'
-                        assert len(endpoint['23'])==1
-                        assert set(endpoint['21'])=={'__widgy_auth_header_name','__widgy_auth_prefix'}
-            (OUT/('muse-'+theme+'-size-'+str(size)+'.json')).write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-    print('Generated six credential-free native candidates; actual size IDs/import/fonts unverified.')
+            (OUT/('muse-'+theme+'-size-'+str(size)+'.json')).unlink(missing_ok=True)
+    print('Generated light/dark Small templates; original document size preserved; endpoint bindings checked; no credentials embedded.')
