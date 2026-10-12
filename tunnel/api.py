@@ -93,6 +93,8 @@ def init():
         raise RuntimeError('Consumer key file must have mode 0600')
     if len(KEY_FILE.read_text().strip()) < 40:
         raise RuntimeError('Consumer key is too short')
+    from apple_api import init_apple
+    init_apple()
 
 
 security = HTTPBearer(auto_error=False)
@@ -402,3 +404,7 @@ app.add_api_route('/v1/sources', sources_endpoint, methods=['GET'], dependencies
 # Task-oriented read tools share the same ledger and authentication as the feed.
 from agent_tools import router as agent_tools_router
 app.include_router(agent_tools_router)
+
+# Apple devices use an independent, read-only display credential.
+from apple_api import router as apple_router
+app.include_router(apple_router)

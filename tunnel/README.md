@@ -59,3 +59,14 @@ Muse 学生管家连接器的完整运行规则见 [MUSE_CONNECTOR_PROMPT.md](MU
 搜索支持source/q/conversation/kind/from_day/to_day，固定upper_seq后按after_seq分页，返回该快照内每个来源记录的最新版本；精确event_id可以回看旧版本。无日期的来源记录使用入账日期。来源健康随查询结果返回，所有工具沿用原专用Bearer，无命令执行、外部消息发送或任意URL下载权限。
 
 `.venv/bin/python check_agent_tools.py` 验证鉴权、并发修订下的快照、分页、过滤、字面关键词、旧版证据、会话统计和查询/回执分离。
+
+
+## Apple 专用展示接口
+
+只读：GET `/v1/apple/dashboard` 和 `/v1/apple/watch`（同样的紧凑视图），GET `/v1/apple/live-activities`（仅活跃emergency）。设备独立Bearer存放`data/apple.key`，0600、至少40字符，原子替换可撤销。设备key不能访问feed/原消息/附件/state或进行任何写入；Muse凭据也可读取以验证输出。当前是数据接口，不发送APNs、不代表设备已经显示。
+
+维护：Muse-only GET `/v1/apple/state`，POST `/v1/apple/dashboard`完整替换，POST `/v1/apple/heartbeat`维护不变内容。乐观base_revision、稳定ID和源event_id/hash检查，拒绝丢失的证据及覆盖新版本。计划只接受上海当日日期、时区时间、最多24条课表输入/2条重要事项/1条emergency；widget/watch只显示当天尚未开始的最近2课（时间/地点）及最多2事，多余课程计数。每次GET按时间过滤，不依赖Muse及时删掉已经开始的课；跨午夜隐藏旧日课程和事项。15分钟无维护显式stale，保留最后当日有效安排，Live Activity过期/partial时不再返回活跃条目。设备仍须检查valid_until/end_at并结束已经显示的卡片。
+
+所有Widgy文本字段由结构化数据派生：display_title、display_course_1/2、display_important_1/2、display_courses_more、display_freshness。没有课程时，只有ready才显示“今日无待上课程”；未初始化为awaiting_muse，不能误称没有安排。state给Muse提供完整计划，设备视图不暴露evidence/hash及原消息。SQLite备份自然包含apple_dashboard表。
+
+`.venv/bin/python check_apple.py`：验证设备最小权限、撤销、证据、幂等/CAS、心跳、小屏条数、时区、开课过滤、过期保留、午夜切换和emergency-only生命周期。接口协议与操作说明见 `../apple/API.md`。连接器规则要求Muse更新现有5分钟任务；服务器说明更新不等于Muse任务已实际变更，需它首次发布真实计划并确认。
