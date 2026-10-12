@@ -77,3 +77,8 @@ Apple低token维护：connector不新增模型任务，使用已有事件理解�
 Apple课程仍由Muse维护，不做服务端课表推导。发布courses_today必填，courses可作输入别名；正在上课保留到end_at。
 
 Widget v3删去MUSE装饰；首课大字名称+地点，下一课普通字体名称，确认没有剩余课时“上完了”。地点省略屏峰校区前缀但保留其他校区；Muse现有轮询改成每10分钟，服务端采集频率不变。
+
+
+学习通通知attachmentType=25/att_web/examOrWork是作业或考试引用卡片，不是待下载文件。保存linked_cards里的可见标题、课程/班级/作业ID，attachment_status=linked_cards_only，不为此误报media失败；不自动访问可能开始答题的链接。其他未知附件与真实文件缺失继续显式报警。修复后重新读取最近通知并生成新修订及daily清单。
+
+Widget v6仅用display_status_lamp显示健康灯，无底部诊断文字。online_state绿=维护新鲜且观测来源健康，黄=部分异常/维护不完整，红=维护过期/无当日计划或全部来源不可用。这不是上游完整同步的证明；Widget断网时可能仍缓存上次颜色，须结合valid_until判断新鲜度。具体原因继续在API/Muse可查询。

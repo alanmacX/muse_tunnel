@@ -14,7 +14,7 @@ def frame(x,y,w,h):
 def widget(theme):
     size=BASE['6']  # User confirmed this actual exported document is Small.
     root=copy.deepcopy(BASE)
-    root['3']='Muse · 今日剩余安排 v5 · '+('跟随系统' if theme=='auto' else '深色' if theme=='dark' else '浅色')
+    root['3']='Muse · 今日剩余安排 v6 · '+('跟随系统' if theme=='auto' else '深色' if theme=='dark' else '浅色')
     root['5']='Muse Tunnel';root['6']=size
     root['36']=[]  # Variables, not visual layers. Keep empty; no invalid names.
     root['1']=[]
@@ -40,7 +40,7 @@ def widget(theme):
     text('Next course',130,650,1340,180,13,field='display_course_2_title')
     for n,y in ((1,950),(2,1150)):
         text('Important '+str(n),130,y,1340,150,11,field='display_important_'+str(n))
-    text('Freshness',130,1410,1340,100,8,field='display_widget_footer',color=muted)
+    text('Status lamp',130,1390,180,140,10,field='display_status_lamp')
     # The decoration stays behind every text layer, above the background.
     layer('Chicken',{'z':'5','1':'Web URL','2':'https://hajiqu.xyz/assets/widget/chicken-v1.png',**frame(1190,1230,289,330)})
     # Widgy's visual stack lists foreground layers first, background last.

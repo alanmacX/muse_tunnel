@@ -61,3 +61,5 @@ Live Activity只允许emergency：已核实、明确影响本人、现在必须�
 Widget v3：无MUSE装饰标题；display_course_1_title为首课大字名称，display_course_1_location为地点，display_course_2_title为下一课名或空字符串。确认无剩余课且计划有效时主标题是“上完了”；缺计划/过期不冒充已结束。默认屏峰校区前缀省略，异地校区保留。Muse任务每10分钟维护，过期阈值相应为25分钟。
 
 Widget v5的health_hint给出附件缺失/来源异常的短原因；没有修改课程事实或源站状态。底部display_widget_footer具体表达这项原因，而不再一律“待核实”。固定公开/assets/widget/chicken-v1.png仅提供非私密装饰图片，Apple数据仍需只读凭据。
+
+Widget v6改用display_status_lamp（🟢/🟡/🔴），online_state为green/yellow/red。绿表示当前计划有效、维护正常且来源无已知异常；黄表示部分异常或未完成核实；红表示维护过期、今日计划缺失或全部来源不可用。具体原因继续在接口保留，小组件不显示诊断文字。设备离线时可能展示缓存灯色，客户端仍须依据valid_until判断过期；灯色不能证明上游历史完整。

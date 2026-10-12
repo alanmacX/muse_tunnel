@@ -201,14 +201,34 @@ def notice_references(data):
     return list(dict.fromkeys(refs))
 
 
+def assignment_card(a):
+    if not isinstance(a,dict) or str(a.get('attachmentType'))!='25':return None
+    card=a.get('att_web')
+    if not isinstance(card,dict) or card.get('examOrWork') not in ('work','exam') or not card.get('examOrWorkId'):return None
+    return {'kind':'assignment_reference' if card['examOrWork']=='work' else 'exam_reference',
+        'status':'reference_only','title':card.get('title') or '',
+        'course_id':str(card.get('courseId') or ''),'class_id':str(card.get('clazzId') or ''),
+        'target_id':str(card['examOrWorkId']),'reference_text':card.get('content') or '',
+        'file_download_expected':False}
+
+
+def notice_cards(data):
+    items=data.get('attachment') or []
+    if isinstance(items,str):
+        try:items=json.loads(items)
+        except ValueError:return []
+    if not isinstance(items,list):return []
+    return [card for a in items if (card:=assignment_card(a)) is not None]
+
+
 def unsupported_notice_attachments(data):
     items=data.get('attachment') or []
     if isinstance(items,str):
         try:items=json.loads(items)
         except ValueError:return 1
     if not isinstance(items,list):return 1
-    return sum(not isinstance(a,dict) or not isinstance(a.get('att_clouddisk'),dict)
-               or not any(a['att_clouddisk'].get(k) for k in ('downPath','downloadUrl','fileId')) for a in items)
+    return sum(assignment_card(a) is None and (not isinstance(a,dict) or not isinstance(a.get('att_clouddisk'),dict)
+               or not any(a['att_clouddisk'].get(k) for k in ('downPath','downloadUrl','fileId'))) for a in items)
 
 
 async def collect_media(svc,data,force=False):
@@ -229,7 +249,7 @@ async def collect_media(svc,data,force=False):
             r=await authenticated_get(svc._client,'https://notice.chaoxing.com/pc/notice/'+quote(notice['source_id'],safe='')+'/getNoticeDetail',{'sendTag':notice['raw'].get('sendTag',0)})
             value=r.json()
             if not value.get('status') or not isinstance(value.get('msg'),dict):raise ValueError('notice_detail_unverified')
-            detail=value['msg'];assets=[]
+            detail=value['msg'];assets=[];cards=notice_cards(detail)
             for url,name in notice_references(detail):
                 try:
                     key='notice-file:'+digest([notice['source_id'],url,name])
@@ -248,7 +268,7 @@ async def collect_media(svc,data,force=False):
             payload={'source':'chaoxing','kind':'notice_detail','source_id':notice['source_id'],
                 'title':notice['title'],'text':detail.get('content') or notice['text'],
                 'rtf_content':detail.get('rtf_content'),'sent_at':notice['sent_at'],
-                'attachments':assets,'attachment_status':'available' if assets and all(a['status']=='available' for a in assets) else 'incomplete' if assets else 'none_detected',
+                'attachments':assets,'linked_cards':cards,'attachment_status':'available' if assets and all(a['status']=='available' for a in assets) else 'incomplete' if assets else 'linked_cards_only' if cards else 'none_detected',
                 'synthetic':False}
             ingest('chaoxing','notice-detail:'+notice['source_id'],payload,payload['sent_at'])
         except Exception as e:failures.append({'notice_id':notice['source_id'],'reason':str(e) if isinstance(e,ValueError) else type(e).__name__})

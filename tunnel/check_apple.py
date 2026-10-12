@@ -49,10 +49,13 @@ with tempfile.TemporaryDirectory() as tmp:
     assert result['display_course_1_time']=='09:00' and result['display_course_1_location']=='Room 1'
     assert len(result['display_widget_footer'])<=12
     health={name:{'available':True,'state':'available','reason':'read_ok','details':{}} for name in ('dingtalk','chaoxing','zjut')}
+    with patch.object(a,'source_availability',return_value=health):
+        assert get().json()['online_state']=='green' and get().json()['display_status_lamp']=='🟢'
     health['chaoxing'].update(state='degraded',reason='partial_collection',details={'components':{
         'media':{'available':False},'notices':{'available':True},'coursework':{'available':True},'im':{'available':False,'enabled':False}}})
     with patch.object(a,'source_availability',return_value=health):
         assert get().json()['display_widget_footer'].startswith('附件缺失')
+        assert get().json()['online_state']=='yellow' and get().json()['display_status_lamp']=='🟡'
     health['chaoxing']['details']['components']['notices']['available']=False
     with patch.object(a,'source_availability',return_value=health):
         assert get().json()['display_widget_footer'].startswith('来源异常')
@@ -76,6 +79,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert client.post('/v1/apple/heartbeat?quiet=true',json={'base_revision':1},headers=muse).status_code==409
     fixed+=timedelta(minutes=26)
     stale=get().json();assert stale['stale'] and stale['courses'] and stale['live_activities']==[]
+    assert stale['online_state']=='red' and stale['display_status_lamp']=='🔴'
     assert client.post('/v1/apple/heartbeat',json={'base_revision':2},headers=muse).status_code==200
     assert not get().json()['stale']
     # An ongoing course stays visible until its end, without another Muse write.

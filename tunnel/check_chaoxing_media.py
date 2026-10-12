@@ -28,6 +28,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert m.modified_time('10-08 14:23').month==10
     assert m.unsupported_notice_attachments({'attachment':'[{"att_other":{}}]'})==1
     assert m.unsupported_notice_attachments({'attachment':'bad json'})==1
+    card={'attachmentType':25,'att_web':{'examOrWork':'work','examOrWorkId':42,'courseId':123,'title':'Test assignment','url':'https://mooc1-api.chaoxing.com/examApi/intoexamorwork'}}
+    assert m.unsupported_notice_attachments({'attachment':[card]})==0
+    assert m.notice_references({'attachment':[card]})==[]
+    assert m.notice_cards({'attachment':json.dumps([card])})[0]['file_download_expected'] is False
+    mixed={'attachment':[card,{'att_other':{}}]}
+    assert m.unsupported_notice_attachments(mixed)==1
     assert m.unsupported_notice_attachments({'attachment':[{'att_clouddisk':{'fileId':'123'}}]})==0
     assert m.notice_references({'rtf_content':'<img src="https://p.cldisk.com/a.png">'})==[('https://p.cldisk.com/a.png','image.jpg')]
     real_client=httpx.AsyncClient

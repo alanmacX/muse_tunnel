@@ -249,6 +249,11 @@ def get_apple_dashboard():
     short='过期' if result['stale'] else '待补齐' if result['courses_need_publication'] else result['health_hint'] if result['health_hint'] else '部分未确认' if result['status']=='partial' else '待同步' if result['status']!='ready' else '更新'
     if result['maintained_at']:short+=' '+datetime.fromisoformat(result['maintained_at']).astimezone(LOCAL).strftime('%H:%M')
     result['display_widget_footer']=short
+    lamp=('red' if result['stale'] or result['status'] in ('awaiting_muse','awaiting_today_plan') or (len(result['source_issues'])==3 and all(s['state'] in ('unavailable','stale','unknown') for s in result['source_issues']))
+        else 'yellow' if result['status']!='ready' or result['courses_need_publication'] or result['source_issues'] else 'green')
+    result['online_state']=lamp
+    result['display_status_lamp']={'green':'🟢','yellow':'🟡','red':'🔴'}[lamp]
+    result['online_state_meaning']='combined Muse maintenance freshness and observed source health; not proof of complete upstream synchronization'
     result['display_courses_more']='另有 '+str(result['remaining_courses_count'])+' 节' if result['remaining_courses_count'] else ''
     return result
 
