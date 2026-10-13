@@ -22,3 +22,9 @@ v5：首选跟随系统版本muse-small-auto-v5.json，前景为uicol_label、�
 底部“待核实”过去是过于笼统的维护/来源健康说明。现在对仅学习通media失败而通知/作业可用的情况显示“附件缺失”，其他来源失败显示“来源异常”，维护partial但无已知来源错误显示“部分未确认”；过期与缺计划仍各自提示。状态不代表课程本身一定未核实。带key文件仍只在tunnel/data/widgy，绝不进Git。图片是透明PNG，不依赖设备本地照片权限。
 
 v6：底部仅一个状态灯，使用display_status_lamp（🟢/🟡/🔴），不显示诊断文字。维护与来源状态由服务器合并，具体诊断保留在API。不宣称缓存的绿色等于设备网络实时在线。自动色、小鸡和无分割线保持。私有文件版本v6。
+# 锁屏课程 v1
+
+`muse-lock-course.json` 保留用户锁屏导出的 `0=29 / 6=6 / a2=4`，只含两层文字：第一门未结束课程名、地点。读取 `/v1/apple/watch`，与 Watch 共用课程数据，无额外 Muse 维护任务。无剩余课程且计划正常时显示“上完了”，地址为空；缺计划时沿用接口的待同步状态。
+
+运行 `python3 apple/widgy/build_lock.py` 生成公开无密钥模板及私有 `tunnel/data/widgy/muse-lock-course-v1.json`（含现有只读 key，权限 600，不提交 Git）。已验证鉴权接口返回两个字符串；具体锁屏/Watch 原生显示及格式兼容须在 Widgy/Watchy 导入确认。
+
