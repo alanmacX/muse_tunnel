@@ -65,6 +65,9 @@ def init():
         CREATE TABLE IF NOT EXISTS assets (
           asset_id TEXT PRIMARY KEY, size_bytes INTEGER NOT NULL, mime_type TEXT NOT NULL,
           filename TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS asset_texts (
+          asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+          text TEXT NOT NULL, truncated INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS retention (
           seq INTEGER PRIMARY KEY REFERENCES events(seq), state TEXT NOT NULL,
           raw_hash TEXT, reason TEXT NOT NULL, quarantined_at TEXT NOT NULL,
@@ -87,6 +90,8 @@ def init():
           consumer TEXT NOT NULL, day TEXT NOT NULL, revision INTEGER NOT NULL,
           hash TEXT NOT NULL, audited_at TEXT NOT NULL,
           PRIMARY KEY(consumer, day, revision));
+        CREATE INDEX IF NOT EXISTS idx_events_source_day ON events(source_day, seq);
+        CREATE INDEX IF NOT EXISTS idx_events_observed_day ON events(observed_day, seq);
         ''')
     if not KEY_FILE.exists():
         raise RuntimeError('Consumer key file is required; run provision.py first')
@@ -313,7 +318,7 @@ def daily(day: date, revision: int | None = Query(None, ge=1)):
     with connection() as c:
         p = package(c, day, revision)
         entries = package_manifest(c, p)
-        confirmed = {r[0] for r in c.execute('SELECT seq FROM receipts WHERE consumer=?', (CONSUMER,))}
+        confirmed = {r[0] for r in c.execute('SELECT seq FROM receipts WHERE consumer=? AND seq<=?', (CONSUMER, p['upper_seq']))}
         missing = [e['event_id'] for e in entries if e['seq'] not in confirmed]
         audit = c.execute('SELECT 1 FROM audits WHERE consumer=? AND day=? AND revision=?',
                           (CONSUMER, p['day'], p['revision'])).fetchone()
@@ -335,7 +340,10 @@ def daily_items(day: date, revision: int = Query(..., ge=1),
         page = (json.loads(p['manifest'])[offset:offset+limit+1] if p['manifest'] else
                 manifest_at(c, p['day'], p['upper_seq'], offset, limit+1))
         part = page[:limit]
-        rows = [c.execute('SELECT * FROM events WHERE seq=?', (e['seq'],)).fetchone() for e in part]
+        seqs = [e['seq'] for e in part]
+        by_seq = ({r['seq']: r for r in c.execute(f"SELECT * FROM events WHERE seq IN ({','.join('?'*len(seqs))})", seqs)}
+                  if seqs else {})
+        rows = [by_seq[s] for s in seqs]
         return {'manifest': part, 'items': deliver(c, rows), 'revision': revision,
                 'manifest_hash': p['hash'], 'next_offset': offset+len(part),
                 'has_more': len(page)>limit}
@@ -354,7 +362,7 @@ def audit(day: date, body: Audit):
         p = package(c, day, None)
         if p['revision'] != body.revision or p['hash'] != body.manifest_hash:
             raise HTTPException(409, 'Daily package changed; fetch latest revision')
-        confirmed = {r[0] for r in c.execute('SELECT seq FROM receipts WHERE consumer=?', (CONSUMER,))}
+        confirmed = {r[0] for r in c.execute('SELECT seq FROM receipts WHERE consumer=? AND seq<=?', (CONSUMER, p['upper_seq']))}
         if any(e['seq'] not in confirmed for e in package_manifest(c, p)):
             raise HTTPException(409, 'Unacknowledged events remain')
         c.execute('INSERT OR IGNORE INTO audits VALUES (?,?,?,?,?)',

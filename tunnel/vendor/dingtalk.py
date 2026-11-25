@@ -306,16 +306,16 @@ def decrypt_db_to_tmp(
 
 
 def _apply_wal_frames(output: Path, wal_path: str, cipher: Any) -> int:
-    """Apply committed WAL frames onto the decrypted DB.
+    """Apply committed WAL frames onto the decrypted DB with O(pages) memory.
 
     A WAL file can hold frames from more than one checkpoint generation. Each
     generation has its own salt (bytes 16..24 of the WAL header); frames whose
     salt does not match the *current* header are leftovers from a previous
     generation and must NOT be applied — doing so corrupts the page image and
     yields a "file is not a database" error. We therefore stop at the first
-    frame whose salt diverges, and only commit pages up to the last commit
-    frame (db_size_after_commit != 0) so a half-written transaction at the tail
-    of the WAL is ignored.
+    frame whose salt diverges, record only the latest file offset per page up
+    to the last commit frame (db_size_after_commit != 0), and decrypt each
+    committed page once instead of buffering raw 4 KiB frame bytes in RAM.
     """
     wal = Path(wal_path)
     if not wal.exists() or wal.stat().st_size <= WAL_HDR_SIZE:
@@ -325,37 +325,47 @@ def _apply_wal_frames(output: Path, wal_path: str, cipher: Any) -> int:
         wal_header = wal_file.read(WAL_HDR_SIZE)
         if len(wal_header) < WAL_HDR_SIZE:
             return 0
-        # WAL header salt occupies bytes 16..24; frame header salt occupies
-        # bytes 8..16. Frames are valid only while their salt matches.
         header_salt = wal_header[16:24]
 
-        # First pass: collect valid frames belonging to the current generation,
-        # remembering where the last committed transaction ends.
-        pending: List[Tuple[int, bytes]] = []
-        committed_upto = 0  # index into `pending` (exclusive) of last commit
-        applied = 0
+        txn_offsets: Dict[int, int] = {}
+        committed_offsets: Dict[int, int] = {}
+        committed_db_pages = 0
+        offset = WAL_HDR_SIZE
         while True:
+            wal_file.seek(offset)
             header = wal_file.read(FRAME_HDR_SIZE)
             if len(header) < FRAME_HDR_SIZE:
                 break
-            page = wal_file.read(PAGE_SIZE)
-            if len(page) < PAGE_SIZE:
+            page_offset = offset + FRAME_HDR_SIZE
+            wal_file.seek(page_offset + PAGE_SIZE - 1)
+            if len(wal_file.read(1)) < 1:
                 break
+            offset = page_offset + PAGE_SIZE
 
             if header[8:16] != header_salt:
                 break  # leftover frame from a previous WAL generation
 
-            page_no = struct.unpack(">I", header[:4])[0]
-            db_size_after_commit = struct.unpack(">I", header[4:8])[0]
+            page_no, db_size_after_commit = struct.unpack(">II", header[:8])
             if page_no > 0:
-                pending.append((page_no, page))
+                txn_offsets[page_no] = page_offset
             if db_size_after_commit != 0:
-                committed_upto = len(pending)  # this frame commits a txn
+                committed_offsets.update(txn_offsets)
+                txn_offsets.clear()
+                committed_db_pages = db_size_after_commit
 
-        for page_no, page in pending[:committed_upto]:
+        applied = 0
+        for page_no in sorted(committed_offsets):
+            if committed_db_pages and page_no > committed_db_pages:
+                continue
+            wal_file.seek(committed_offsets[page_no])
+            page = wal_file.read(PAGE_SIZE)
+            if len(page) < PAGE_SIZE:
+                break
             dst.seek((page_no - 1) * PAGE_SIZE)
             dst.write(decrypt_page(page, cipher))
             applied += 1
+        if committed_db_pages:
+            dst.truncate(committed_db_pages * PAGE_SIZE)
     return applied
 
 

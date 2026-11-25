@@ -127,6 +127,18 @@ def expire():
             if c.execute('SELECT 1 FROM events WHERE payload LIKE ? LIMIT 1',('%'+asset_id+'%',)).fetchone():continue
             (api.DB.parent/'media'/asset_id).unlink(missing_ok=True)
             c.execute('DELETE FROM assets WHERE asset_id=?',(asset_id,))
+    stale_tmp_before=datetime.now(timezone.utc).timestamp()-3600
+    for temp_dir in (api.DB.parent/'chaoxing-files',api.DB.parent/'qq-downloads'):
+        if not temp_dir.is_dir():continue
+        for child in temp_dir.iterdir():
+            try:
+                if child.stat().st_mtime<stale_tmp_before:
+                    import shutil
+                    shutil.rmtree(child,ignore_errors=True) if child.is_dir() else child.unlink(missing_ok=True)
+            except OSError:pass
+    with api.connection() as c:
+        c.execute('PRAGMA optimize')
+        c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
 
 def asset_ids(value):

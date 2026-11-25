@@ -8,4 +8,4 @@ DT_DIR="$(dirname "$DT_BIN")"
 LIB_PATHS="$(find "$DT_DIR" -name '*.so' -printf '%h\n' | sort -u | tr '\n' ':')"
 export LD_LIBRARY_PATH="${LIB_PATHS}${DT_DIR}"
 cd "$DT_DIR"
-exec ./com.alibabainc.dingtalk --no-sandbox --disable-gpu
+exec ./com.alibabainc.dingtalk --no-sandbox --disable-gpu --disable-dev-shm-usage --renderer-process-limit=2 --js-flags=--max-old-space-size=192

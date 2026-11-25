@@ -49,11 +49,13 @@ def refresh_daily():
             if previous and previous['hash']==h:continue
             c.execute('INSERT INTO packages VALUES (?,?,?,?,?,?)',
                       (day,previous['revision']+1 if previous else 1,upper,'',h,now()))
+    with connection() as c:
+        c.execute('PRAGMA wal_checkpoint(PASSIVE)')
 
 
 def status_signature(source, details):
     components=details.get('components')
-    if source!='chaoxing':return components
+    if source not in ('chaoxing','dingtalk'):return components
     # Counts, rolling timestamps and repeated attempts are visible in /sources
     # but should not generate new availability events by themselves.
     signals={k:{name:v.get(name) for name in ('enabled','available','reason')}

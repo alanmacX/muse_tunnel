@@ -12,6 +12,9 @@ ExecStart=/home/ubuntu/muse-tunnel/deploy/start-dingtalk.sh
 Restart=on-failure
 RestartSec=10
 LimitNOFILE=65536
+MemoryHigh=640M
+MemoryMax=896M
+MemorySwapMax=256M
 
 [Install]
 WantedBy=multi-user.target
