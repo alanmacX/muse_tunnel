@@ -1,6 +1,6 @@
 """Durable unfiltered source observations; no importance model or labels."""
 from datetime import datetime,timedelta
-from api import LOCAL,canonical,connection,digest,now
+from api import LOCAL,canonical,connection,digest,manifest_at,now
 
 
 def ingest(source, source_id, payload, sent_at=None):
@@ -29,21 +29,38 @@ def ingest(source, source_id, payload, sent_at=None):
 
 
 def refresh_daily():
-    import json
     with connection() as c:
         c.execute('BEGIN IMMEDIATE')
         today=datetime.now(LOCAL).date()
         days={today.isoformat(),(today-timedelta(days=1)).isoformat()}
-        days.update(r[0] for r in c.execute('SELECT source_day FROM events UNION SELECT observed_day FROM events'))
-        upper=c.execute('SELECT COALESCE(MAX(seq),0) FROM events').fetchone()[0]
+        # Only days with a newer ledger entry need their manifest re-hashed.
+        tips=dict(c.execute('''SELECT day,max(seq) FROM (
+          SELECT source_day day,seq FROM events UNION ALL SELECT observed_day,seq FROM events
+        ) GROUP BY day'''))
+        days.update(tips)
+        upper=max(tips.values(),default=0)
+        latest={r['day']:r for r in c.execute('''SELECT p.day,p.revision,p.hash,p.upper_seq
+          FROM packages p JOIN (SELECT day,max(revision) revision FROM packages GROUP BY day) t
+          USING(day,revision)''')}
         for day in sorted(days):
-            manifest=[dict(r) for r in c.execute('''SELECT seq,event_id,hash,source,revision FROM events
-              WHERE seq<=? AND (source_day=? OR observed_day=?) ORDER BY seq''',(upper,day,day))]
-            h=digest(manifest)
-            previous=c.execute('SELECT revision,hash FROM packages WHERE day=? ORDER BY revision DESC LIMIT 1',(day,)).fetchone()
+            previous=latest.get(day)
+            if previous and tips.get(day,0)<=previous['upper_seq']:continue
+            h=digest(manifest_at(c,day,upper))
             if previous and previous['hash']==h:continue
             c.execute('INSERT INTO packages VALUES (?,?,?,?,?,?)',
-                      (day,previous['revision']+1 if previous else 1,upper,canonical(manifest),h,now()))
+                      (day,previous['revision']+1 if previous else 1,upper,'',h,now()))
+
+
+def status_signature(source, details):
+    components=details.get('components')
+    if source!='chaoxing':return components
+    # Counts, rolling timestamps and repeated attempts are visible in /sources
+    # but should not generate new availability events by themselves.
+    signals={k:{name:v.get(name) for name in ('enabled','available','reason')}
+             for k,v in (components or {}).items()}
+    issues=sorted({(i['stage'],i['endpoint'],i['code'],i.get('http_status',0))
+                   for i in details.get('diagnostics',[])})
+    return signals,issues
 
 
 def update_status(source,state,available,reason,details):
@@ -56,7 +73,7 @@ def update_status(source,state,available,reason,details):
         failures=0 if available else ((old['failures'] if old else 0)+1)
         c.execute('INSERT OR REPLACE INTO source_status VALUES (?,?,?,?,?,?,?,?)',
                   (source,state,int(available),timestamp,success,failures,reason,canonical(details)))
-        changed=not old or (old['state'],old['available'],old['reason'])!=(state,int(available),reason) or json.loads(old['details']).get('components')!=details.get('components')
+        changed=not old or (old['state'],old['available'],old['reason'])!=(state,int(available),reason) or status_signature(source,json.loads(old['details']))!=status_signature(source,details)
         if old:
             old_details=json.loads(old['details'])
             changed=changed or any(old_details.get(k)!=details.get(k) for k in ('failure_stage','failure_endpoint'))

@@ -525,7 +525,7 @@ class ChaoxingService:
     # Init & session persistence
     # ------------------------------------------------------------------
 
-    async def init(self):
+    async def init(self, *, probe=True):
         """Load persisted session from DB on startup."""
         async with aiosqlite.connect(self.db_path) as db:
             row = await (await db.execute(
@@ -537,7 +537,7 @@ class ChaoxingService:
                 self.uid = row[1]
                 self.username = row[2]
                 # Lenient: trust stored session; only invalidate on explicit auth failure
-                self.is_logged_in = await self._probe_session()
+                self.is_logged_in = await self._probe_session() if probe else False
                 log.info(f"Chaoxing session loaded (uid={self.uid}, logged_in={self.is_logged_in})")
 
     @staticmethod

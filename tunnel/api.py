@@ -18,6 +18,7 @@ DB = Path(os.environ.get('MUSE_TUNNEL_DB', 'data/tunnel.db'))
 KEY_FILE = Path(os.environ.get('MUSE_TUNNEL_KEY_FILE', 'data/consumer.key'))
 CONSUMER = 'alan-muse'
 LOCAL = ZoneInfo('Asia/Shanghai')
+SOURCES = ('chaoxing', 'dingtalk', 'zjut', 'qq', 'storage')
 
 
 def canonical(value):
@@ -285,6 +286,16 @@ def receipts(body: Receipts):
     return {'accepted': len(rows), 'idempotent': True, 'meaning': 'consumer-reported processing; not proof of comprehension'}
 
 
+def manifest_at(c, day, upper_seq, offset=0, limit=-1):
+    return [dict(r) for r in c.execute('''SELECT seq,event_id,hash,source,revision FROM events
+        WHERE seq<=? AND (source_day=? OR observed_day=?) ORDER BY seq LIMIT ? OFFSET ?''',
+        (upper_seq, day, day, limit, offset))]
+
+
+def package_manifest(c, p):
+    return json.loads(p['manifest']) if p['manifest'] else manifest_at(c, p['day'], p['upper_seq'])
+
+
 def package(c, day, revision):
     sql = 'SELECT * FROM packages WHERE day=?'
     params = [day.isoformat()]
@@ -301,12 +312,12 @@ def package(c, day, revision):
 def daily(day: date, revision: int | None = Query(None, ge=1)):
     with connection() as c:
         p = package(c, day, revision)
-        entries = json.loads(p['manifest'])
+        entries = package_manifest(c, p)
         confirmed = {r[0] for r in c.execute('SELECT seq FROM receipts WHERE consumer=?', (CONSUMER,))}
         missing = [e['event_id'] for e in entries if e['seq'] not in confirmed]
         audit = c.execute('SELECT 1 FROM audits WHERE consumer=? AND day=? AND revision=?',
                           (CONSUMER, p['day'], p['revision'])).fetchone()
-        counts = {s: sum(e['source']==s for e in entries) for s in ('chaoxing', 'dingtalk', 'zjut')}
+        counts = {s: sum(e['source']==s for e in entries) for s in SOURCES}
         return {'date': p['day'], 'timezone': 'Asia/Shanghai', 'revision': p['revision'],
                 'manifest_hash': p['hash'], 'upper_seq': p['upper_seq'], 'count': len(entries),
                 'source_counts': counts, 'missing_receipt_ids': missing, 'audit_complete': bool(audit),
@@ -321,12 +332,13 @@ def daily_items(day: date, revision: int = Query(..., ge=1),
                 offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200)):
     with connection() as c:
         p = package(c, day, revision)
-        manifest = json.loads(p['manifest'])
-        part = manifest[offset:offset+limit]
+        page = (json.loads(p['manifest'])[offset:offset+limit+1] if p['manifest'] else
+                manifest_at(c, p['day'], p['upper_seq'], offset, limit+1))
+        part = page[:limit]
         rows = [c.execute('SELECT * FROM events WHERE seq=?', (e['seq'],)).fetchone() for e in part]
         return {'manifest': part, 'items': deliver(c, rows), 'revision': revision,
                 'manifest_hash': p['hash'], 'next_offset': offset+len(part),
-                'has_more': offset+len(part)<len(manifest)}
+                'has_more': len(page)>limit}
 
 
 class Audit(BaseModel):
@@ -343,7 +355,7 @@ def audit(day: date, body: Audit):
         if p['revision'] != body.revision or p['hash'] != body.manifest_hash:
             raise HTTPException(409, 'Daily package changed; fetch latest revision')
         confirmed = {r[0] for r in c.execute('SELECT seq FROM receipts WHERE consumer=?', (CONSUMER,))}
-        if any(e['seq'] not in confirmed for e in json.loads(p['manifest'])):
+        if any(e['seq'] not in confirmed for e in package_manifest(c, p)):
             raise HTTPException(409, 'Unacknowledged events remain')
         c.execute('INSERT OR IGNORE INTO audits VALUES (?,?,?,?,?)',
                   (CONSUMER, p['day'], p['revision'], p['hash'], now()))
@@ -377,7 +389,7 @@ def create_app():
 def source_availability(c):
     result = {}
     current = datetime.now(timezone.utc)
-    for source in ('chaoxing', 'dingtalk', 'zjut'):
+    for source in SOURCES:
         row = c.execute('SELECT * FROM source_status WHERE source=?', (source,)).fetchone()
         if not row:
             result[source] = {'state':'unknown','available':False,'reason':'not_yet_checked'}

@@ -10,6 +10,7 @@ from api import DB,LOCAL,connection,digest,now
 from store import ingest,state_get,state_set
 from media import archive_file,MAX_BYTES
 from vendor import chaoxing
+from chaoxing_health import ReadIssue, check_login, diagnostic, json_response, read_request
 
 
 def trusted_url(url,auth=False):
@@ -24,13 +25,13 @@ def trusted_url(url,auth=False):
     return url
 
 
-async def authenticated_get(client,url,params=None):
+async def authenticated_get(client,url,params=None,endpoint="material_list",page=None):
     for _ in range(6):
         url=trusted_url(url,auth=True)
-        r=await client.get(url,params=params,follow_redirects=False);params=None
+        r=await read_request(client,"GET",url,endpoint,page=page,params=params,follow_redirects=False);params=None
         if r.is_redirect:url=urljoin(str(r.url),r.headers['location']);continue
-        r.raise_for_status();return r
-    raise ValueError('too_many_source_redirects')
+        return r
+    raise ReadIssue('too_many_source_redirects',endpoint,page=page)
 
 
 async def download(svc,url,name,authenticated=False):
@@ -49,6 +50,7 @@ async def download(svc,url,name,authenticated=False):
                         target=trusted_url(target)
                         authenticated=authenticated and (urlsplit(target).hostname or '').endswith('.chaoxing.com')
                         url=target;continue
+                    if authenticated:check_login(r,'attachment_download')
                     r.raise_for_status()
                     if 'text/html' in r.headers.get('content-type','') and 'attachment' not in r.headers.get('content-disposition',''):
                         raise ValueError('download_returned_html')
@@ -138,11 +140,11 @@ async def course_materials(svc,course,cutoff):
         while True:
             params={'courseid':cid,'clazzid':clazz,'cpi':cpi,'ut':'s','page':page}
             if folder!='0':params.update(dataId=folder,enc=enc)
-            r=await authenticated_get(svc._client,'https://mooc2-ans.chaoxing.com/mooc2-ans/coursedata/stu-datalist',params)
+            r=await authenticated_get(svc._client,'https://mooc2-ans.chaoxing.com/mooc2-ans/coursedata/stu-datalist',params,page=page)
             parsed=Materials(r.text)
-            if parsed.pages is None:raise ValueError('material_response_unverified')
+            if parsed.pages is None:raise ReadIssue('material_response_unverified','material_list',r.status_code,page)
             fingerprint=digest(parsed.rows)
-            if page>1 and fingerprint in page_hashes:raise ValueError('material_pagination_not_advancing')
+            if page>1 and fingerprint in page_hashes:raise ReadIssue('material_pagination_not_advancing','material_list',r.status_code,page)
             page_hashes.add(fingerprint)
             for item in parsed.rows:
                 if not item['id'].isdigit():continue
@@ -163,7 +165,9 @@ async def course_materials(svc,course,cutoff):
                     try:
                         asset=await download(svc,url,item['name'],True)
                         state_set('chaoxing',identity,json.dumps({'modified':item['modified'],'asset':asset},ensure_ascii=False))
-                    except Exception as e:asset={'status':'not_downloaded','reason':str(e) if isinstance(e,ValueError) else type(e).__name__}
+                    except Exception as e:
+                        issue=diagnostic(e,'media','material_download')
+                        asset={'status':'not_downloaded','reason':issue['code'],'diagnostic':issue}
                 payload={'source':'chaoxing','kind':'course_material','source_id':item['id'],'course_id':cid,
                     'conversation':name,'title':item['name'],'modified_at_display':item['modified'],
                     'date_basis':'source_display_with_year_inferred_if_missing','sent_at':stamp.isoformat() if stamp else None,
@@ -246,8 +250,8 @@ async def collect_media(svc,data,force=False):
     failures=[];files=[];images=0
     for notice in recent:
         try:
-            r=await authenticated_get(svc._client,'https://notice.chaoxing.com/pc/notice/'+quote(notice['source_id'],safe='')+'/getNoticeDetail',{'sendTag':notice['raw'].get('sendTag',0)})
-            value=r.json()
+            r=await authenticated_get(svc._client,'https://notice.chaoxing.com/pc/notice/'+quote(notice['source_id'],safe='')+'/getNoticeDetail',{'sendTag':notice['raw'].get('sendTag',0)},endpoint='notice_detail')
+            value=json_response(r,'notice_detail',code='notice_detail_unverified')
             if not value.get('status') or not isinstance(value.get('msg'),dict):raise ValueError('notice_detail_unverified')
             detail=value['msg'];assets=[];cards=notice_cards(detail)
             for url,name in notice_references(detail):
@@ -259,11 +263,14 @@ async def collect_media(svc,data,force=False):
                         asset=await download(svc,url,name)
                         state_set('chaoxing',key,json.dumps(asset,ensure_ascii=False))
                     assets.append(asset)
-                except Exception as e:assets.append({'status':'not_downloaded','filename':name,'reason':str(e) if isinstance(e,ValueError) else type(e).__name__})
+                except Exception as e:
+                    issue=diagnostic(e,'media','notice_attachment')
+                    assets.append({'status':'not_downloaded','filename':name,'reason':issue['code'],'diagnostic':issue})
             if unsupported_notice_attachments(detail):
                 assets.append({'status':'not_downloaded','reason':'unsupported_attachment_reference'})
             if any(a['status']!='available' for a in assets):
-                failures.append({'notice_id':notice['source_id'],'reason':'incomplete_attachments'})
+                failures.extend({'diagnostic':a.get('diagnostic') or diagnostic(ValueError(a.get('reason')),'media','notice_attachment')}
+                                for a in assets if a['status']!='available')
             images+=sum(a.get('mime_type','').startswith('image/') for a in assets)
             payload={'source':'chaoxing','kind':'notice_detail','source_id':notice['source_id'],
                 'title':notice['title'],'text':detail.get('content') or notice['text'],
@@ -271,7 +278,7 @@ async def collect_media(svc,data,force=False):
                 'attachments':assets,'linked_cards':cards,'attachment_status':'available' if assets and all(a['status']=='available' for a in assets) else 'incomplete' if assets else 'linked_cards_only' if cards else 'none_detected',
                 'synthetic':False}
             ingest('chaoxing','notice-detail:'+notice['source_id'],payload,payload['sent_at'])
-        except Exception as e:failures.append({'notice_id':notice['source_id'],'reason':str(e) if isinstance(e,ValueError) else type(e).__name__})
+        except Exception as e:failures.append({'diagnostic':diagnostic(e,'media','notice_detail')})
     courses=[]
     for channel in data.get('channelList',[]):
         if str(channel.get('cataid'))!='100000002':continue
@@ -281,10 +288,11 @@ async def collect_media(svc,data,force=False):
         if cid and clazz:courses.append((cid,clazz,str(channel.get('cpi') or ''),content.get('name') or cid))
     for course in courses:
         try:files.extend(await course_materials(svc,course,cutoff))
-        except Exception as e:failures.append({'course_id':course[0],'reason':str(e) if isinstance(e,ValueError) else type(e).__name__})
-    if data.get('hasMore'):failures.append({'reason':'course_list_pagination_required'})
+        except Exception as e:failures.append({'diagnostic':diagnostic(e,'media','material_list')})
+    if data.get('hasMore'):failures.append({'diagnostic':diagnostic(
+        ReadIssue('course_list_pagination_required','course_list'),'media','course_list')})
     for f in files:
-        if f['attachment_status']!='available':failures.append({'material_id':f['source_id'],'reason':'attachment_not_downloaded'})
+        if f['attachment_status']!='available':failures.append({'diagnostic':f['attachments'][0]['diagnostic']})
     result={'notices_checked':len(recent),'courses_checked':len(courses),'recent_materials':len(files),
             'downloaded_materials':sum(f['attachment_status']=='available' for f in files),'notice_images':images,'failures':failures,
             'available':not failures and all(f['attachment_status']=='available' for f in files),'reason':'read_ok' if not failures else 'partial_media_collection',

@@ -5,7 +5,7 @@ from fastapi import APIRouter,Depends,HTTPException,Query
 from api import authenticate,connection,deliver,event,source_availability
 
 router=APIRouter(prefix='/v1/tools',dependencies=[Depends(authenticate)])
-Source=Literal['dingtalk','chaoxing','zjut']
+Source=Literal['dingtalk','chaoxing','zjut','qq']
 
 
 def upper_bound(c,upper_seq):

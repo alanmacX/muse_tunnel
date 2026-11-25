@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory() as tmp:
     import api,store,retention
     from fastapi.testclient import TestClient
     api.init();client=TestClient(api.app);headers={'Authorization':'Bearer '+token}
-    old=(datetime.now(timezone.utc)-timedelta(days=100)).isoformat();day=datetime.fromisoformat(old).date().isoformat()
+    old=(datetime.now(timezone.utc)-timedelta(days=100)).isoformat();day=datetime.fromisoformat(old).astimezone(api.LOCAL).date().isoformat()
     store.ingest('dingtalk','old',{'kind':'message','text':'expired unneeded message','raw':{'content':'original'}},old)
     store.ingest('dingtalk','new',{'kind':'message','text':'recent'},api.now())
     store.ingest('zjut','schedule',{'kind':'timetable','text':'current schedule'},old)

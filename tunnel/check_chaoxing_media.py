@@ -1,5 +1,5 @@
 """Isolated source redirect, cookie isolation, parsing and binary checks."""
-import asyncio,hashlib,json,os,socket,tempfile
+import asyncio,hashlib,json,os,secrets,socket,tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -7,6 +7,8 @@ import httpx
 
 with tempfile.TemporaryDirectory() as tmp:
     os.environ['MUSE_TUNNEL_DB']=str(Path(tmp)/'ledger.db')
+    key=Path(tmp)/'key';key.write_text(secrets.token_urlsafe(48));key.chmod(0o600)
+    os.environ['MUSE_TUNNEL_KEY_FILE']=str(key)
     import api,chaoxing_media as m
     api.init()
     public=[(socket.AF_INET,socket.SOCK_STREAM,6,'',('1.1.1.1',443))]

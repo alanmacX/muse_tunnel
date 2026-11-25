@@ -15,6 +15,7 @@ SESSION_DB=os.environ.get('MUSE_SESSION_DB','data/sessions.db')
 from sanitize import clean
 from media import attachments,archive_file
 from chaoxing_media import collect_media
+from chaoxing_health import ReadIssue, check_login, diagnostic, json_response, read_request
 
 def timestamp(ms):
     try:return datetime.fromtimestamp(float(ms)/1000,tz=timezone.utc).isoformat()
@@ -182,7 +183,7 @@ async def roaming(svc,params,conv):
 
 
 async def inbox(svc):
-    seen=set();count=0;cursor='';newest=None;anchor_found=False
+    seen=set();cursors=set();count=0;cursor='';newest=None;anchor_found=False
     today=datetime.now(timezone.utc).date().isoformat()
     checkpoint=state_get('chaoxing','inbox_anchor') if state_get('chaoxing','inbox_full_day')==today else None
     def finish():
@@ -190,22 +191,24 @@ async def inbox(svc):
         if not checkpoint:state_set('chaoxing','inbox_full_day',today)
         return count
     for page in range(1,501):
-        r=await svc._client.post('https://notice.chaoxing.com/pc/notice/getNoticeList',
+        endpoint='notice_list'
+        r=await read_request(svc._client,'POST','https://notice.chaoxing.com/pc/notice/getNoticeList',endpoint,page=page,
                                 data={'lastValue':cursor,'type':'0','sort':'0'},
                                 headers={'Referer':'https://notice.chaoxing.com/pc/notice/myNotice'})
-        r.raise_for_status();data=r.json()
+        data=json_response(r,endpoint,page=page,code='notice_response_changed')
         # The website returns exactly {status: true} after the final nonempty page.
         if cursor and data == {'status': True}:return finish()
         container=data.get('notices')
-        if not isinstance(container,dict) or 'list' not in container:raise RuntimeError('notice_response_changed')
-        rows=container['list'] or []
+        if not isinstance(container,dict) or not isinstance(container.get('list'),list):
+            raise ReadIssue('notice_response_changed',endpoint,r.status_code,page)
+        rows=container['list']
         if not rows:return finish()
         marker=digest(clean(rows))
-        if marker in seen:raise RuntimeError('notice_pagination_not_advancing')
+        if marker in seen:raise ReadIssue('notice_pagination_not_advancing',endpoint,r.status_code,page)
         seen.add(marker)
         for raw in rows:
-            identity=raw.get('idCode') or raw.get('id')
-            if identity is None:raise RuntimeError('notice_identity_missing')
+            identity=(raw.get('idCode') or raw.get('id')) if isinstance(raw,dict) else None
+            if identity is None:raise ReadIssue('notice_identity_missing',endpoint,r.status_code,page)
             if newest is None:newest=str(identity)
             if checkpoint==str(identity):anchor_found=True
             sent=timestamp(raw.get('insertTime') or raw.get('createTime') or raw.get('sendTime'))
@@ -215,9 +218,11 @@ async def inbox(svc):
             ingest('chaoxing','inbox:'+str(identity),payload,sent);count+=1
         if anchor_found or container.get('lastPage') in (True,1,'1','true'):return finish()
         next_cursor=str(container.get('lastGetId') or '')
-        if not next_cursor or next_cursor==cursor:raise RuntimeError('notice_cursor_missing')
+        if not next_cursor or next_cursor==cursor or next_cursor in cursors:
+            raise ReadIssue('notice_pagination_not_advancing',endpoint,r.status_code,page)
+        cursors.add(next_cursor)
         cursor=next_cursor
-    raise RuntimeError('notice_page_limit_reached')
+    raise ReadIssue('notice_page_limit_reached','notice_list',page=500)
 
 
 async def coursework(svc,data):
@@ -241,12 +246,13 @@ async def coursework(svc,data):
         async with semaphore:
             cid,class_id,cpi,name=course
             try:
-                r=await svc._client.get('https://mooc1-api.chaoxing.com/work/task-list',
+                r=await read_request(svc._client,'GET','https://mooc1-api.chaoxing.com/work/task-list','assignment_list',
                     params={'courseId':cid,'classId':class_id,'cpi':cpi},
                     headers={'User-Agent':chaoxing.CHAOXING_MOBILE_UA,'Referer':'https://mooc1.chaoxing.com'})
-                r.raise_for_status()
+                if 'json' in r.headers.get('content-type',''):
+                    json_response(r,'assignment_list',code='assignment_response_unverified')
                 if not any(x in r.text for x in ('goTask','暂无作业','class="empty"')):
-                    return 'assignment_response_unverified',0
+                    raise ReadIssue('assignment_response_unverified','assignment_list',r.status_code)
                 items=chaoxing._parse_assignments_html(r.text,cid,name)
                 for item in items:
                     identity='assignment:'+cid+':'+str(item['id'])
@@ -264,65 +270,139 @@ async def coursework(svc,data):
                              'status':item['status'],'due_at':due,'synthetic':False}
                     ingest('chaoxing',identity,payload)
                 return None,len(items)
-            except Exception as e:return type(e).__name__,0
+            except Exception as e:return diagnostic(e,'coursework','assignment_list'),0
     results=await asyncio.gather(*(fetch(c) for c in courses))
-    return len(courses),sum(n for _,n in results),sorted({err for err,_ in results if err})
+    groups={}
+    for issue,_ in results:
+        if issue:
+            key=(issue['code'],issue.get('http_status'))
+            entry=groups.setdefault(key,{**issue,'affected_courses':0})
+            entry['affected_courses']+=1
+    return len(courses),sum(n for _,n in results),list(groups.values())
+
+
+def chaoxing_course_response(response):
+    check_login(response,'course_list')
+    response.raise_for_status()
+    data=json_response(response,'course_list',code='course_api_invalid_response')
+    if isinstance(data.get('channelList'),list):return data
+    raise ReadIssue('course_api_invalid_response','course_list',response.status_code)
 
 
 async def collect_chaoxing():
     svc=chaoxing.ChaoxingService(SESSION_DB);source='chaoxing'
+    components={'im':{'available':False,'enabled':False,'reason':'excluded_by_user'}}
+    issues=[]
+    details={'coverage':'inbox_coursework_recent_notice_and_course_files_im_excluded',
+             'components':components,'diagnostics':[],'requires_user_login':False,
+             'conversations':0,'observed_messages':0,'course_list_has_more':None,
+             'history_retention':'upstream_defined',
+             'attachments':'authenticated_recent_notice_and_course_files_with_explicit_failures'}
+    stats={'notices':None,'courses':None,'assignments':None}
+    stage,endpoint='session','session_store'
+
+    def failure(exc, stage, endpoint):
+        issue=diagnostic(exc,stage,endpoint)
+        issues.append(issue)
+        components[stage]={'available':False,'reason':issue['code']}
+
+    def publish():
+        complete=all(components.get(key,{}).get('available',False)
+                     for key in ('courses','notices','coursework','media'))
+        partial=any(components.get(key,{}).get('available',False)
+                    for key in ('courses','notices','coursework','media'))
+        # Put authentication first; expose at most one short list of failures.
+        issues.sort(key=lambda i:i['code']!='login_required')
+        login=any(i['code']=='login_required' for i in issues)
+        if complete:state_set(source,'last_complete_sync',now())
+        details.update(stats,diagnostics=issues[:4],diagnostic_count=len(issues),
+                       requires_user_login=login,last_complete_sync=state_get(source,'last_complete_sync'))
+        if issues:
+            details.update(failure_stage=issues[0]['stage'],failure_endpoint=issues[0]['endpoint'])
+        reason=('login_required' if login else 'authenticated_read_ok' if complete else
+                'partial_collection' if partial else issues[0]['code'] if issues else 'all_components_failed')
+        update_status(source,'available' if complete else 'degraded' if partial else 'unavailable',
+                      partial,reason,details)
+
     try:
-        await svc.init()
-        if not svc._client:raise RuntimeError('login_required')
-        r=await svc._client.get('https://mooc1-api.chaoxing.com/mycourse/backclazzdata',
-                params={'view':'json','mcode':'','rss':1},headers={'User-Agent':chaoxing.CHAOXING_MOBILE_UA})
-        r.raise_for_status();courses_data=r.json()
-        if not isinstance(courses_data.get('channelList'),list):raise RuntimeError('login_or_course_api_failure')
-        components={};counts=0;conversations=0
-        components['im']={'available':False,'enabled':False,'reason':'excluded_by_user'}
+        # Use the real courses endpoint as the auth probe (legacy passport check redirects to 404).
+        await svc.init(probe=False)
+        if not svc._client:raise ReadIssue('login_required','session_store')
+        stage,endpoint='courses','course_list'
+        courses_data=None
         try:
-            notices=await inbox(svc);components['notices']={'available':True,'reason':'read_ok'}
+            r=await read_request(svc._client,'GET','https://mooc1-api.chaoxing.com/mycourse/backclazzdata',endpoint,
+                params={'view':'json','mcode':'','rss':1},headers={'User-Agent':chaoxing.CHAOXING_MOBILE_UA,
+                'X-Requested-With':'com.chaoxing.mobile','Accept-Language':'zh_CN','Referer':'https://i.chaoxing.com'})
+            courses_data=chaoxing_course_response(r)
+            details['course_list_has_more']=bool(courses_data.get('hasMore'))
+            components['courses']={'available':True,'reason':'read_ok'}
+            if courses_data.get('hasMore'):
+                failure(ReadIssue('course_list_pagination_required',endpoint,r.status_code),stage,endpoint)
+        except ReadIssue as e:
+            if e.code=='login_required':raise
+            failure(e,stage,endpoint)
+        stage,endpoint='notices','notice_list'
+        try:
+            stats['notices']=await inbox(svc)
+            components['notices']={'available':True,'reason':'read_ok'}
         except Exception as e:
-            notices=0;components['notices']={'available':False,'reason':str(e) if isinstance(e,RuntimeError) else type(e).__name__}
-        last_coursework=state_get(source,'coursework_last_success')
-        cached=state_get(source,'coursework_status')
-        if last_coursework and cached and time.time()-float(last_coursework)<900:
-            course_count,assignments,component=json.loads(cached)
-            components['coursework']=component.copy()
+            if isinstance(e,ReadIssue) and e.code=='login_required':raise
+            failure(e,stage,endpoint)
+        if courses_data is not None:
+            stage,endpoint='coursework','assignment_list'
+            try:
+                last=state_get(source,'coursework_last_success')
+                cached=state_get(source,'coursework_status')
+                if not courses_data.get('hasMore') and last and cached and time.time()-float(last)<900:
+                    stats['courses'],stats['assignments'],component=json.loads(cached)
+                    components[stage]=component.copy()
+                else:
+                    stats['courses'],stats['assignments'],errors=await coursework(svc,courses_data)
+                    issues.extend(errors)
+                    components[stage]={'available':not errors,'reason':'read_ok' if not errors else 'partial_assignment_collection'}
+                    if not errors and not courses_data.get('hasMore'):
+                        state_set(source,'coursework_last_success',str(time.time()))
+                        state_set(source,'coursework_status',json.dumps([stats['courses'],stats['assignments'],components[stage]]))
+            except Exception as e:failure(e,stage,endpoint)
+            stage,endpoint='media','material_collection'
+            try:
+                media=await collect_media(svc,courses_data)
+                failures=media.pop('failures',[])
+                components[stage]={**media,'failure_count':len(failures)}
+                grouped={}
+                for item in failures:
+                    issue=item.get('diagnostic') or diagnostic(ValueError(item.get('reason')),'media',endpoint)
+                    key=(issue['endpoint'],issue['code'],issue.get('http_status'))
+                    entry=grouped.setdefault(key,{**issue,'affected_items':0})
+                    entry['affected_items']+=1
+                issues.extend(grouped.values())
+            except Exception as e:failure(e,stage,endpoint)
         else:
-            course_count,assignments,errors=await coursework(svc,courses_data)
-            components['coursework']={'available':not errors,'reason':'read_ok' if not errors else ','.join(errors)}
-            if not errors:
-                state_set(source,'coursework_last_success',str(time.time()))
-                state_set(source,'coursework_status',json.dumps([course_count,assignments,components['coursework']]))
-        if courses_data.get('hasMore'):
-            components['coursework']={'available':False,'reason':'course_list_pagination_required'}
-        try:
-            components['media']=await collect_media(svc,courses_data)
-        except Exception as e:
-            components['media']={'available':False,'reason':type(e).__name__}
-        active=[item for item in components.values() if item.get('enabled',True)]
-        good=sum(item['available'] for item in active)
-        update_status(source,'available' if good==len(active) else 'degraded' if good else 'unavailable',bool(good),
-                      'authenticated_read_ok' if good==len(active) else 'partial_collection' if good else 'all_components_failed',
-                      {'conversations':conversations,'observed_messages':counts,'notices':notices,
-                       'courses':course_count,'assignments':assignments,'components':components,
-                       'coverage':'inbox_coursework_recent_notice_and_course_files_im_excluded','course_list_has_more':bool(courses_data.get('hasMore')),
-                       'history_retention':'upstream_defined','attachments':'authenticated_recent_notice_and_course_files_with_explicit_failures'})
-        return counts,notices,assignments
+            for key in ('coursework','media'):
+                components[key]={'available':False,'reason':'blocked_by_course_list'}
+        return 0,stats['notices'],stats['assignments']
     except Exception as e:
-        reason=str(e) if isinstance(e,RuntimeError) else type(e).__name__
-        update_status(source,'unavailable',False,reason,{'coverage':'inbox_coursework_im_excluded','requires_user_login':reason=='login_required'})
+        failure(e,stage,endpoint)
         return None,None,None
     finally:
-        if svc._client:await svc._client.aclose()
+        try:publish()
+        finally:
+            if svc._client:await svc._client.aclose()
 
 
 async def main():
-    os.umask(0o077);init()
+    from storage_guard import report_collection
+    os.umask(0o077)
+    DB.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    disk = report_collection(DB.parent)
+    init()
+    update_status('storage', disk['level'], disk['level']=='ok',
+                  'disk_space_ok' if disk['level']=='ok' else 'disk_space_'+disk['level'], disk)
     # Independent sources: a failure in one never prevents the other collector from running.
     from zjut_collect import collect as collect_zjut
-    ding,cha,academic=await asyncio.gather(asyncio.to_thread(collect_dingtalk),collect_chaoxing(),collect_zjut())
+    from qq_collect import collect as collect_qq
+    ding,cha,academic,qq=await asyncio.gather(asyncio.to_thread(collect_dingtalk),collect_chaoxing(),collect_zjut(),collect_qq())
     refresh_daily()
-    print(json.dumps({'dingtalk_counts':ding,'chaoxing_counts':cha,'zjut_counts':academic,'checked_at':now()}))
+    print(json.dumps({'dingtalk_counts':ding,'chaoxing_counts':cha,'zjut_counts':academic,'qq_counts':qq,'checked_at':now()}))
 if __name__=='__main__':asyncio.run(main())
